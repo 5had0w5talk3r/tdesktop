@@ -18,7 +18,7 @@ TextPalette {
 }
 
 TextStyle {
-	font: "IBM Plex Sans";
+	font: font;
 	linkFont: font;
 	linkFontOver: font;
 	lineHeight: pixels;
