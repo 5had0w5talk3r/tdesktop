@@ -17,12 +17,10 @@ TextPalette {
 	selectOverlay: color;
 }
 
-/*font: "IBM Plex Sans Regular";*/
-
 TextStyle {
-	font: "IBM Plex Sans Regular";
-	linkFont: "IBM Plex Sans Regular";
-	linkFontOver: "IBM Plex Sans Regular";
+	font: font;
+	linkFont: font;
+	linkFontOver: font;
 	lineHeight: pixels;
 }
 
