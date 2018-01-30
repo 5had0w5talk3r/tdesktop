@@ -51,7 +51,7 @@ void startManager() {
 		cSetRealScale(dbisOne);
 	}
 
-	internal::registerFontFamily(qsl("Open Sans"));
+	internal::registerFontFamily(qsl("IBM Plex Sans"));
 	internal::startModules();
 }
 
