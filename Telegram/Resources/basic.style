@@ -17,7 +17,7 @@ TextPalette {
 	selectOverlay: color;
 }
 
-font: "IBM Plex Sans Regular";
+/*font: "IBM Plex Sans Regular";*/
 
 TextStyle {
 	font: "IBM Plex Sans Regular";
