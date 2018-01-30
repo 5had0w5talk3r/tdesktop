@@ -17,14 +17,18 @@ TextPalette {
 	selectOverlay: color;
 }
 
+font: "IBM Plex Sans Regular";
+
 TextStyle {
-	font: font;
-	linkFont: font;
-	linkFontOver: font;
+	font: "IBM Plex Sans Regular";
+	linkFont: "IBM Plex Sans Regular";
+	linkFontOver: "IBM Plex Sans Regular";
 	lineHeight: pixels;
 }
 
 semibold: "IBM Plex Sans SemiBold";
+bold: "IBM Plex Sans Bold";
+regular: "IBM Plex Sans Regular";
 
 fsize: 13px;
 normalFont: font(fsize);
