@@ -18,13 +18,15 @@ TextPalette {
 }
 
 TextStyle {
-	font: "IBM Plex Sans";
+	font: font;
 	linkFont: font;
 	linkFontOver: font;
 	lineHeight: pixels;
 }
 
 semibold: "IBM Plex Sans SemiBold";
+bold: "IBM Plex Sans Bold";
+regular: "IBM Plex Sans Regular";
 
 fsize: 13px;
 normalFont: font(fsize);
