@@ -411,10 +411,23 @@ QString SuggestionsController::getEmojiQuery() {
 		return QString();
 	}
 
-	auto isSuggestionChar = [](QChar ch) {
-		return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || (ch == '_') || (ch == '-') || (ch == '+');
+	const auto isUpperCaseLetter = [](QChar ch) {
+		return (ch >= 'A' && ch <= 'Z');
 	};
-	auto isGoodCharBeforeSuggestion = [isSuggestionChar](QChar ch) {
+	const auto isLetter = [](QChar ch) {
+		return (ch >= 'a' && ch <= 'z')
+			|| (ch >= 'A' && ch <= 'Z')
+			|| (ch >= '0' && ch <= '9');
+	};
+	const auto isSuggestionChar = [](QChar ch) {
+		return (ch >= 'a' && ch <= 'z')
+			|| (ch >= 'A' && ch <= 'Z')
+			|| (ch >= '0' && ch <= '9')
+			|| (ch == '_')
+			|| (ch == '-')
+			|| (ch == '+');
+	};
+	const auto isGoodCharBeforeSuggestion = [&](QChar ch) {
 		return !isSuggestionChar(ch) || (ch == 0);
 	};
 	Assert(position > 0 && position <= text.size());
@@ -427,7 +440,22 @@ QString SuggestionsController::getEmojiQuery() {
 				if (position > i + 1) {
 					// Skip colon and the first letter.
 					_queryStartPosition += i + 2;
-					return text.mid(i, position - i);
+					const auto length = position - i;
+					auto result = text.mid(i, length);
+					const auto upperCaseLetters = std::count_if(
+						result.begin(),
+						result.end(),
+						isUpperCaseLetter);
+					const auto letters = std::count_if(
+						result.begin(),
+						result.end(),
+						isLetter);
+					if (letters == upperCaseLetters && letters == 1) {
+						// No upper case single letter suggestions.
+						// We don't want to suggest emoji on :D and :-P
+						return QString();
+					}
+					return result.toLower();
 				}
 			}
 			return QString();
@@ -452,8 +480,7 @@ void SuggestionsController::replaceCurrent(const QString &replacement) {
 		cursor.insertText(replacement);
 	}
 
-	auto emojiText = GetSuggestionEmoji(QStringToUTF16(replacement));
-	if (auto emoji = Find(QStringFromUTF16(emojiText))) {
+	if (auto emoji = Find(replacement)) {
 		if (emoji->hasVariants()) {
 			auto it = cEmojiVariants().constFind(emoji->nonColoredId());
 			if (it != cEmojiVariants().cend()) {
