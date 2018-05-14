@@ -77,14 +77,12 @@ Messenger::Messenger(not_null<Core::Launcher*> launcher)
 	Expects(!_logo.isNull());
 	Expects(!_logoNoMargin.isNull());
 	Expects(SingleInstance == nullptr);
-
 	SingleInstance = this;
 
 	Fonts::Start();
 
 	ThirdParty::start();
 	Global::start();
-	Sandbox::refreshGlobalProxy(); // Depends on Global::started().
 
 	startLocalStorage();
 
@@ -168,6 +166,10 @@ Messenger::Messenger(not_null<Core::Launcher*> launcher)
 	if (cStartToSettings()) {
 		_window->showSettings();
 	}
+
+#ifndef TDESKTOP_DISABLE_NETWORK_PROXY
+	QNetworkProxyFactory::setUseSystemConfiguration(true);
+#endif // !TDESKTOP_DISABLE_NETWORK_PROXY
 
 	_window->updateIsActive(Global::OnlineFocusTimeout());
 
@@ -389,17 +391,12 @@ void Messenger::setMtpAuthorization(const QByteArray &serialized) {
 
 void Messenger::startMtp() {
 	Expects(!_mtproto);
-
-	_mtproto = std::make_unique<MTP::Instance>(
-		_dcOptions.get(),
-		MTP::Instance::Mode::Normal,
-		base::take(_private->mtpConfig));
-	_mtproto->setUserPhone(cLoggedPhoneNumber());
+	_mtproto = std::make_unique<MTP::Instance>(_dcOptions.get(), MTP::Instance::Mode::Normal, base::take(_private->mtpConfig));
 	_private->mtpConfig.mainDcId = _mtproto->mainDcId();
 
-	_mtproto->setStateChangedHandler([](MTP::ShiftedDcId dc, int32 state) {
-		if (dc == MTP::maindc()) {
-			Global::RefConnectionTypeChanged().notify();
+	_mtproto->setStateChangedHandler([](MTP::ShiftedDcId shiftedDcId, int32 state) {
+		if (App::wnd()) {
+			App::wnd()->mtpStateChanged(shiftedDcId, state);
 		}
 	});
 	_mtproto->setSessionResetHandler([](MTP::ShiftedDcId shiftedDcId) {
@@ -490,20 +487,6 @@ void Messenger::startLocalStorage() {
 		InvokeQueued(this, [this] {
 			if (_mtproto) {
 				_mtproto->requestConfig();
-			}
-		});
-	});
-	subscribe(Global::RefSelfChanged(), [=] {
-		InvokeQueued(this, [=] {
-			const auto phone = App::self()
-				? App::self()->phone()
-				: QString();
-			if (cLoggedPhoneNumber() != phone) {
-				cSetLoggedPhoneNumber(phone);
-				if (_mtproto) {
-					_mtproto->setUserPhone(phone);
-				}
-				Local::writeSettings();
 			}
 		});
 	});
@@ -856,11 +839,7 @@ bool Messenger::openLocalUrl(const QString &url) {
 		}
 	} else if (auto socksMatch = regex_match(qsl("^socks/?\\?(.+)(#|$)"), command, matchOptions)) {
 		auto params = url_parse_params(socksMatch->captured(1), UrlParamNameTransform::ToLower);
-		ConnectionBox::ShowApplyProxyConfirmation(ProxyData::Type::Socks5, params);
-		return true;
-	} else if (auto proxyMatch = regex_match(qsl("^proxy/?\\?(.+)(#|$)"), command, matchOptions)) {
-		auto params = url_parse_params(proxyMatch->captured(1), UrlParamNameTransform::ToLower);
-		ConnectionBox::ShowApplyProxyConfirmation(ProxyData::Type::Mtproto, params);
+		ConnectionBox::ShowApplyProxyConfirmation(params);
 		return true;
 	}
 	return false;

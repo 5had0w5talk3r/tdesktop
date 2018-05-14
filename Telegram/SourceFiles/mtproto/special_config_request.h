@@ -7,8 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "base/bytes.h"
-
 namespace MTP {
 
 class SpecialConfigRequest : public QObject {
@@ -17,49 +15,33 @@ public:
 		base::lambda<void(
 			DcId dcId,
 			const std::string &ip,
-			int port,
-			bytes::const_span secret)> callback,
-		const QString &phone);
+			int port)> callback);
+
+	~SpecialConfigRequest();
 
 private:
-	enum class Type {
-		App,
-		Dns,
-	};
-	struct Attempt {
-		Type type;
-		QString domain;
-	};
-	struct Request {
-		Request(not_null<QNetworkReply*> reply);
-		Request(Request &&other);
-		Request &operator=(Request &&other);
-		~Request();
-
-		void destroy();
-
-		QPointer<QNetworkReply> reply;
-
-	};
-
-	void sendNextRequest();
-	void performRequest(const Attempt &attempt);
-	void requestFinished(Type type, not_null<QNetworkReply*> reply);
-	QByteArray finalizeRequest(not_null<QNetworkReply*> reply);
+	void performApp1Request();
+	void performApp2Request();
+	void performDnsRequest();
+	void app1Finished();
+	void app2Finished();
+	void dnsFinished();
 	void handleResponse(const QByteArray &bytes);
 	bool decryptSimpleConfig(const QByteArray &bytes);
 
 	base::lambda<void(
 		DcId dcId,
 		const std::string &ip,
-		int port,
-		bytes::const_span secret)> _callback;
-	QString _phone;
+		int port)> _callback;
 	MTPhelp_ConfigSimple _simpleConfig;
 
 	QNetworkAccessManager _manager;
-	std::vector<Attempt> _attempts;
-	std::vector<Request> _requests;
+	std::unique_ptr<QNetworkReply> _app1Reply;
+	std::unique_ptr<QNetworkReply> _app2Reply;
+	std::unique_ptr<QNetworkReply> _dnsReply;
+
+	std::unique_ptr<DcOptions> _localOptions;
+	std::unique_ptr<Instance> _localInstance;
 
 };
 

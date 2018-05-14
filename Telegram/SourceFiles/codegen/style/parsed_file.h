@@ -24,9 +24,7 @@ Modifier GetModifier(const QString &name);
 // Parses an input file to the internal struct.
 class ParsedFile {
 public:
-	explicit ParsedFile(
-		const Options &options,
-		std::vector<QString> includeStack = {});
+	explicit ParsedFile(const Options &options);
 	ParsedFile(const ParsedFile &other) = delete;
 	ParsedFile &operator=(const ParsedFile &other) = delete;
 
@@ -109,8 +107,6 @@ private:
 	Options options_;
 	bool failed_ = false;
 	ModulePtr module_;
-
-	std::vector<QString> includeStack_;
 
 	QMap<std::string, structure::Type> typeNames_ = {
 		{ "int"       , { structure::TypeTag::Int } },

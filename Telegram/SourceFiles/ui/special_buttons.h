@@ -14,10 +14,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 class PeerData;
 
-namespace Ui {
-class InfiniteRadialAnimation;
-} // namespace Ui
-
 namespace Data {
 class Feed;
 } // namespace Data
@@ -73,7 +69,9 @@ private:
 
 	const style::IconButton &_st;
 
-	std::unique_ptr<Ui::InfiniteRadialAnimation> _loading;
+	bool _loading = false;
+	Animation a_loading;
+	BasicAnimation _a_loading;
 
 	const style::icon *_iconOverride = nullptr;
 	const style::color *_colorOverride = nullptr;

@@ -325,6 +325,10 @@ class WebLoadManager : public QObject {
 public:
 	WebLoadManager(QThread *thread);
 
+#ifndef TDESKTOP_DISABLE_NETWORK_PROXY
+	void setProxySettings(const QNetworkProxy &proxy);
+#endif // !TDESKTOP_DISABLE_NETWORK_PROXY
+
 	void append(webFileLoader *loader, const QString &url);
 	void stop(webFileLoader *reader);
 	bool carries(webFileLoader *reader) const;
@@ -333,6 +337,7 @@ public:
 
 signals:
 	void processDelayed();
+	void proxyApplyDelayed();
 
 	void progress(webFileLoader *loader, qint64 already, qint64 size);
 	void finished(webFileLoader *loader, QByteArray data);
@@ -345,6 +350,7 @@ public slots:
 	void onMeta();
 
 	void process();
+	void proxyApply();
 	void finish();
 
 private:
@@ -352,6 +358,9 @@ private:
 	void sendRequest(webFileLoaderPrivate *loader, const QString &redirect = QString());
 	bool handleReplyResult(webFileLoaderPrivate *loader, WebReplyProcessResult result);
 
+#ifndef TDESKTOP_DISABLE_NETWORK_PROXY
+	QNetworkProxy _proxySettings;
+#endif // !TDESKTOP_DISABLE_NETWORK_PROXY
 	QNetworkAccessManager _manager;
 	typedef QMap<webFileLoader*, webFileLoaderPrivate*> LoaderPointers;
 	LoaderPointers _loaderPointers;
@@ -383,4 +392,5 @@ static mtpFileLoader * const CancelledMtpFileLoader = static_cast<mtpFileLoader*
 static webFileLoader * const CancelledWebFileLoader = static_cast<webFileLoader*>(CancelledFileLoader);
 static WebLoadManager * const FinishedWebLoadManager = SharedMemoryLocation<WebLoadManager, 0>();
 
+void reinitWebLoadManager();
 void stopWebLoadManager();

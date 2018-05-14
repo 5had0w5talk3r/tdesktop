@@ -16,7 +16,7 @@ namespace Ui {
 
 static UserData * const LookingUpInlineBot = SharedMemoryLocation<UserData, 0>();
 
-class FlatTextarea : public TWidgetHelper<QTextEdit>, protected base::Subscriber {
+class FlatTextarea : public TWidgetHelper<QTextEdit>, private base::Subscriber {
 	Q_OBJECT
 
 public:
@@ -31,14 +31,6 @@ public:
 	void setMaxLength(int maxLength);
 	void setMinHeight(int minHeight);
 	void setMaxHeight(int maxHeight);
-
-	void enableInstantReplaces(bool enabled);
-	void addInstantReplace(const QString &what, const QString &with);
-	void commmitInstantReplacement(
-		int from,
-		int till,
-		const QString &with,
-		base::optional<QString> checkOriginal = base::none);
 
 	void setPlaceholder(base::lambda<QString()> placeholderFactory, int afterSymbols = 0);
 	void updatePlaceholder();
@@ -150,10 +142,6 @@ protected:
 	void checkContentHeight();
 
 private:
-	struct InstantReplaceNode {
-		QString text;
-		std::map<QChar, InstantReplaceNode> tail;
-	};
 	void updatePalette();
 	void refreshPlaceholder();
 
@@ -171,10 +159,6 @@ private:
 	// 5. Applying tags from "_insertedTags" in case we pasted text with tags, not just text.
 	// Rule 4 applies only if we inserted chars not in the middle of a tag (but at the end).
 	void processFormatting(int changedPosition, int changedEnd);
-
-	void processInstantReplaces(const QString &text);
-	void applyInstantReplace(const QString &what, const QString &with);
-	bool revertInstantReplace();
 
 	bool heightAutoupdated();
 
@@ -231,13 +215,6 @@ private:
 	friend bool operator!=(const LinkRange &a, const LinkRange &b);
 	using LinkRanges = QVector<LinkRange>;
 	LinkRanges _links;
-
-	QTextCharFormat _defaultCharFormat;
-
-	int _instantReplaceMaxLength = 0;
-	InstantReplaceNode _reverseInstantReplaces;
-	bool _instantReplacesEnabled = true;
-
 };
 
 inline bool operator==(const FlatTextarea::LinkRange &a, const FlatTextarea::LinkRange &b) {
@@ -919,19 +896,6 @@ public:
 class PortInput : public MaskedInputField {
 public:
 	PortInput(QWidget *parent, const style::InputField &st, base::lambda<QString()> placeholderFactory, const QString &val);
-
-protected:
-	void correctValue(
-		const QString &was,
-		int wasCursor,
-		QString &now,
-		int &nowCursor) override;
-
-};
-
-class HexInput : public MaskedInputField {
-public:
-	HexInput(QWidget *parent, const style::InputField &st, base::lambda<QString()> placeholderFactory, const QString &val);
 
 protected:
 	void correctValue(

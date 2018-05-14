@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 void initLocationManager();
+void reinitLocationManager();
 void deinitLocationManager();
 
 class LocationCoords {

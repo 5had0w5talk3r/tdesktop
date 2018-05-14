@@ -512,12 +512,6 @@ HistoryWidget::HistoryWidget(
 			data->text());
 	});
 	_emojiSuggestions.create(this, _field.data());
-	_emojiSuggestions->setReplaceCallback([=](
-			int from,
-			int till,
-			const QString &replacement) {
-		_field->commmitInstantReplacement(from, till, replacement);
-	});
 	updateFieldSubmitSettings();
 
 	_field->hide();
@@ -1564,9 +1558,7 @@ void HistoryWidget::calcNextReplyReturn() {
 			_replyReturn = App::histItemById(_channel, _replyReturns.back());
 		}
 	}
-	if (!_replyReturn) {
-		updateControlsVisibility();
-	}
+	if (!_replyReturn) updateControlsVisibility();
 }
 
 void HistoryWidget::fastShowAtEnd(not_null<History*> history) {
@@ -1667,13 +1659,11 @@ void HistoryWidget::showHistory(const PeerId &peerId, MsgId showAtMsgId, bool re
 				}
 
 				clearDelayedShowAt();
-				while (_replyReturn) {
+				if (_replyReturn) {
 					if (_replyReturn->history() == _history && _replyReturn->id == showAtMsgId) {
 						calcNextReplyReturn();
 					} else if (_replyReturn->history() == _migrated && -_replyReturn->id == showAtMsgId) {
 						calcNextReplyReturn();
-					} else {
-						break;
 					}
 				}
 
@@ -1737,14 +1727,11 @@ void HistoryWidget::showHistory(const PeerId &peerId, MsgId showAtMsgId, bool re
 		_membersDropdown.destroy();
 		_scrollToAnimation.finish();
 		_history = _migrated = nullptr;
-		_list = nullptr;
 		_peer = nullptr;
 		_channel = NoChannel;
 		_canSendMessages = false;
 		_silent.destroy();
 		updateBotKeyboard();
-	} else {
-		Assert(_list == nullptr);
 	}
 
 	App::clearMousedItems();
@@ -1759,6 +1746,7 @@ void HistoryWidget::showHistory(const PeerId &peerId, MsgId showAtMsgId, bool re
 
 	_membersDropdownShowTimer.stop();
 	_scroll->takeWidget<HistoryInner>().destroy();
+	_list = nullptr;
 
 	clearInlineBot();
 
@@ -2443,15 +2431,11 @@ void HistoryWidget::messagesReceived(PeerData *peer, const MTPmessages_Messages 
 				return;
 			}
 		}
-		while (_replyReturn) {
-			if (_replyReturn->history() == _history
-				&& _replyReturn->id == _delayedShowAtMsgId) {
+		if (_replyReturn) {
+			if (_replyReturn->history() == _history && _replyReturn->id == _delayedShowAtMsgId) {
 				calcNextReplyReturn();
-			} else if (_replyReturn->history() == _migrated
-				&& -_replyReturn->id == _delayedShowAtMsgId) {
+			} else if (_replyReturn->history() == _migrated && -_replyReturn->id == _delayedShowAtMsgId) {
 				calcNextReplyReturn();
-			} else {
-				break;
 			}
 		}
 
@@ -4631,7 +4615,7 @@ void HistoryWidget::itemRemoved(not_null<const HistoryItem*> item) {
 			cancelReply();
 		}
 	}
-	while (item == _replyReturn) {
+	if (item == _replyReturn) {
 		calcNextReplyReturn();
 	}
 	if (_pinnedBar && item->id == _pinnedBar->msgId) {

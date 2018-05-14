@@ -17,7 +17,6 @@ class RoundButton;
 class IconButton;
 class DropdownMenu;
 class UnreadBadge;
-class InfiniteRadialAnimation;
 } // namespace Ui
 
 namespace Window {
@@ -38,8 +37,6 @@ public:
 		int canDeleteCount = 0;
 		int canForwardCount = 0;
 	};
-
-	~TopBarWidget();
 
 	void updateControlsVisibility();
 	void finishAnimating();
@@ -81,24 +78,10 @@ private:
 	void showMenu();
 	void toggleInfoSection();
 
-	void updateConnectingState();
 	void updateAdaptiveLayout();
 	int countSelectedButtonsTop(float64 selectedShown);
-	void step_connecting(TimeMs ms, bool timer);
 
 	void paintTopBar(Painter &p, TimeMs ms);
-	void paintStatus(
-		Painter &p,
-		int left,
-		int top,
-		int availableWidth,
-		int outerWidth);
-	bool paintConnectingState(
-		Painter &p,
-		int left,
-		int top,
-		int outerWidth,
-		TimeMs ms);
 	QRect getMembersShowAreaGeometry() const;
 	void updateMembersShowArea();
 	void updateOnlineDisplay();
@@ -142,7 +125,6 @@ private:
 	int _leftTaken = 0;
 	int _rightTaken = 0;
 	bool _animatingMode = false;
-	std::unique_ptr<Ui::InfiniteRadialAnimation> _connecting;
 
 	int _unreadCounterSubscription = 0;
 	base::Timer _onlineUpdater;

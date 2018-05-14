@@ -582,7 +582,6 @@ void WrapWidget::finishShowContent() {
 	_scrollTillBottomChanges.fire(_content->scrollTillBottomChanges());
 	_topShadow->raise();
 	_topShadow->finishAnimating();
-	_contentChanges.fire({});
 
 	// This was done for tabs support.
 	//
@@ -679,10 +678,6 @@ void WrapWidget::setWrap(Wrap wrap) {
 	//	convertProfileFromStackToTab();
 	//}
 	_wrap = wrap;
-}
-
-rpl::producer<> WrapWidget::contentChanged() const {
-	return _contentChanges.events();
 }
 
 bool WrapWidget::hasTopBarShadow() const {

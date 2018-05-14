@@ -11,7 +11,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_history.h"
 #include "dialogs/dialogs_layout.h"
 #include "ui/effects/ripple_animation.h"
-#include "ui/effects/radial_animation.h"
 #include "ui/empty_userpic.h"
 #include "data/data_photo.h"
 #include "data/data_session.h"
@@ -164,7 +163,8 @@ void HistoryDownButton::setUnreadCount(int unreadCount) {
 
 EmojiButton::EmojiButton(QWidget *parent, const style::IconButton &st)
 : RippleButton(parent, st.ripple)
-, _st(st) {
+, _st(st)
+, _a_loading(animation(this, &EmojiButton::step_loading)) {
 	resize(_st.width, _st.height);
 	setCursor(style::cur_pointer);
 }
@@ -177,10 +177,8 @@ void EmojiButton::paintEvent(QPaintEvent *e) {
 	p.fillRect(e->rect(), st::historyComposeAreaBg);
 	paintRipple(p, _st.rippleAreaPosition.x(), _st.rippleAreaPosition.y(), ms, _rippleOverride ? &(*_rippleOverride)->c : nullptr);
 
-	const auto loadingState = _loading
-		? _loading->computeState()
-		: Ui::InfiniteRadialAnimation::State{ 0., 0, FullArcLength };
-	p.setOpacity(1. - loadingState.shown);
+	auto loading = a_loading.current(ms, _loading ? 1 : 0);
+	p.setOpacity(1 - loading);
 
 	auto over = isOver();
 	auto icon = _iconOverride ? _iconOverride : &(over ? _st.iconOver : _st.icon);
@@ -195,23 +193,25 @@ void EmojiButton::paintEvent(QPaintEvent *e) {
 
 	PainterHighQualityEnabler hq(p);
 	QRect inner(QPoint((width() - st::historyEmojiCircle.width()) / 2, st::historyEmojiCircleTop), st::historyEmojiCircle);
-	if (loadingState.arcLength < FullArcLength) {
-		p.drawArc(inner, loadingState.arcFrom, loadingState.arcLength);
+	if (loading > 0) {
+		int32 full = FullArcLength;
+		int32 start = qRound(full * float64(ms % st::historyEmojiCirclePeriod) / st::historyEmojiCirclePeriod), part = qRound(loading * full / st::historyEmojiCirclePart);
+		p.drawArc(inner, start, full - part);
 	} else {
 		p.drawEllipse(inner);
 	}
 }
 
 void EmojiButton::setLoading(bool loading) {
-	if (loading && !_loading) {
-		_loading = std::make_unique<Ui::InfiniteRadialAnimation>(
-			animation(this, &EmojiButton::step_loading),
-			st::defaultInfiniteRadialAnimation);
-	}
-	if (loading) {
-		_loading->start();
-	} else if (_loading) {
-		_loading->stop();
+	if (_loading != loading) {
+		_loading = loading;
+		auto from = loading ? 0. : 1., to = loading ? 1. : 0.;
+		a_loading.start([this] { update(); }, from, to, st::historyEmojiCircleDuration);
+		if (loading) {
+			_a_loading.start();
+		} else {
+			_a_loading.stop();
+		}
 	}
 }
 
