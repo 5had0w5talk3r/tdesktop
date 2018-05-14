@@ -20,14 +20,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "application.h"
 #include "mainwindow.h"
 #include "mainwidget.h"
-#include "core/update_checker.h"
+#include "autoupdater.h"
 #include "auth_session.h"
 #include "apiwrap.h"
 #include "messenger.h"
 #include "boxes/peer_list_box.h"
 #include "window/window_controller.h"
 #include "window/window_slide_animation.h"
-#include "window/window_connecting_widget.h"
 #include "profile/profile_channel_controllers.h"
 #include "storage/storage_media_prepare.h"
 #include "data/data_session.h"
@@ -120,15 +119,10 @@ DialogsWidget::DialogsWidget(QWidget *parent, not_null<Window::Controller*> cont
 	connect(_filter, SIGNAL(cursorPositionChanged(int,int)), this, SLOT(onFilterCursorMoved(int,int)));
 
 #ifndef TDESKTOP_DISABLE_AUTOUPDATE
-	Core::UpdateChecker checker;
-	rpl::merge(
-		rpl::single(rpl::empty_value()),
-		checker.isLatest(),
-		checker.failed(),
-		checker.ready()
-	) | rpl::start_with_next([=] {
-		checkUpdateStatus();
-	}, lifetime());
+	Sandbox::connect(SIGNAL(updateLatest()), this, SLOT(onCheckUpdateStatus()));
+	Sandbox::connect(SIGNAL(updateFailed()), this, SLOT(onCheckUpdateStatus()));
+	Sandbox::connect(SIGNAL(updateReady()), this, SLOT(onCheckUpdateStatus()));
+	onCheckUpdateStatus();
 #endif // !TDESKTOP_DISABLE_AUTOUPDATE
 
 	subscribe(Adaptive::Changed(), [this] { updateForwardBar(); });
@@ -171,24 +165,16 @@ DialogsWidget::DialogsWidget(QWidget *parent, not_null<Window::Controller*> cont
 
 	updateJumpToDateVisibility(true);
 	updateSearchFromVisibility(true);
-	setupConnectingWidget();
-}
-
-void DialogsWidget::setupConnectingWidget() {
-	_connecting = Window::ConnectingWidget::CreateDefaultWidget(
-		this,
-		Window::AdaptiveIsOneColumn());
 }
 
 #ifndef TDESKTOP_DISABLE_AUTOUPDATE
-void DialogsWidget::checkUpdateStatus() {
-	using Checker = Core::UpdateChecker;
-	if (Checker().state() == Checker::State::Ready) {
+void DialogsWidget::onCheckUpdateStatus() {
+	if (Sandbox::updatingState() == Application::UpdatingReady) {
 		if (_updateTelegram) return;
 		_updateTelegram.create(this);
 		_updateTelegram->show();
 		_updateTelegram->setClickedCallback([] {
-			Core::checkReadyUpdate();
+			checkReadyUpdate();
 			App::restart();
 		});
 	} else {
@@ -290,7 +276,6 @@ void DialogsWidget::showAnimated(Window::SlideDirection direction, const Window:
 	_jumpToDate->hide(anim::type::instant);
 	_chooseFromUser->hide(anim::type::instant);
 	_lockUnlock->hide();
-	_connecting->setForceHidden(true);
 
 	int delta = st::slideShift;
 	if (_showDirection == Window::SlideDirection::FromLeft) {
@@ -316,7 +301,6 @@ void DialogsWidget::animationCallback() {
 		_mainMenuToggle->show();
 		if (_forwardCancel) _forwardCancel->show();
 		_filter->show();
-		_connecting->setForceHidden(false);
 		updateLockUnlockVisibility();
 		updateJumpToDateVisibility(true);
 		updateSearchFromVisibility(true);

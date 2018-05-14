@@ -420,30 +420,18 @@ enum DBIWorkMode {
 	dbiwmWindowOnly = 2,
 };
 
-struct ProxyData {
-	enum class Type {
-		None,
-		Socks5,
-		Http,
-		Mtproto,
-	};
+enum DBIConnectionType {
+	dbictAuto = 0,
+	dbictHttpAuto = 1, // not used
+	dbictHttpProxy = 2,
+	dbictTcpProxy = 3,
+};
 
-	Type type = Type::None;
+struct ProxyData {
 	QString host;
 	uint32 port = 0;
 	QString user, password;
-
-	bool valid() const;
-	bool supportsCalls() const;
-	explicit operator bool() const;
-	bool operator==(const ProxyData &other) const;
-	bool operator!=(const ProxyData &other) const;
-
-	static bool ValidSecret(const QString &secret);
-
 };
-
-QNetworkProxy ToNetworkProxy(const ProxyData &proxy);
 
 enum DBIScale {
 	dbisAuto = 0,

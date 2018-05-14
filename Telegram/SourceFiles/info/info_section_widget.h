@@ -14,10 +14,6 @@ namespace Ui {
 class SettingsSlider;
 } // namespace Ui
 
-namespace Window {
-class ConnectingWidget;
-} // namespace Window
-
 namespace Info {
 
 class Memento;
@@ -69,7 +65,6 @@ private:
 
 	object_ptr<WrapWidget> _content;
 	object_ptr<Ui::RpWidget> _topBarSurrogate = { nullptr };
-	base::unique_qptr<Window::ConnectingWidget> _connecting;
 
 };
 

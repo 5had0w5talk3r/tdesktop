@@ -21,8 +21,7 @@ class ReportBox : public BoxContent, public RPCSender {
 	Q_OBJECT
 
 public:
-	ReportBox(QWidget*, not_null<PeerData*> peer);
-	ReportBox(QWidget*, not_null<PeerData*> peer, MessageIdsList ids);
+	ReportBox(QWidget*, PeerData *peer);
 
 private slots:
 	void onReport();
@@ -50,14 +49,13 @@ private:
 	void reportDone(const MTPBool &result);
 	bool reportFail(const RPCError &error);
 
-	not_null<PeerData*> _peer;
-	base::optional<MessageIdsList> _ids;
+	PeerData *_peer;
 
 	std::shared_ptr<Ui::RadioenumGroup<Reason>> _reasonGroup;
-	object_ptr<Ui::Radioenum<Reason>> _reasonSpam = { nullptr };
-	object_ptr<Ui::Radioenum<Reason>> _reasonViolence = { nullptr };
-	object_ptr<Ui::Radioenum<Reason>> _reasonPornography = { nullptr };
-	object_ptr<Ui::Radioenum<Reason>> _reasonOther = { nullptr };
+	object_ptr<Ui::Radioenum<Reason>> _reasonSpam;
+	object_ptr<Ui::Radioenum<Reason>> _reasonViolence;
+	object_ptr<Ui::Radioenum<Reason>> _reasonPornography;
+	object_ptr<Ui::Radioenum<Reason>> _reasonOther;
 	object_ptr<Ui::InputArea> _reasonOtherText = { nullptr };
 
 	mtpRequestId _requestId = 0;

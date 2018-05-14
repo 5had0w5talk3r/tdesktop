@@ -15,7 +15,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "zlib.h"
 #include "lang/lang_keys.h"
 #include "base/openssl_help.h"
-#include "base/qthelp_url.h"
 #include <openssl/bn.h>
 #include <openssl/err.h>
 #include <openssl/aes.h>
@@ -30,18 +29,6 @@ namespace {
 constexpr auto kRecreateKeyId = AuthKey::KeyId(0xFFFFFFFFFFFFFFFFULL);
 constexpr auto kIntSize = static_cast<int>(sizeof(mtpPrime));
 constexpr auto kMaxModExpSize = 256;
-constexpr auto kWaitForBetterTimeout = TimeMs(2000);
-constexpr auto kMinConnectedTimeout = TimeMs(1000);
-constexpr auto kMaxConnectedTimeout = TimeMs(8000);
-constexpr auto kMinReceiveTimeout = TimeMs(4000);
-constexpr auto kMaxReceiveTimeout = TimeMs(64000);
-constexpr auto kMarkConnectionOldTimeout = TimeMs(192000);
-constexpr auto kPingDelayDisconnect = 60;
-constexpr auto kPingSendAfter = TimeMs(30000);
-constexpr auto kPingSendAfterForce = TimeMs(45000);
-
-// If we can't connect for this time we will ask _instance to update config.
-constexpr auto kRequestConfigTimeout = TimeMs(8000);
 
 // Don't try to handle messages larger than this size.
 constexpr auto kMaxMessageLength = 16 * 1024 * 1024;
@@ -53,35 +40,6 @@ QString LogIdsVector(const QVector<MTPlong> &ids) {
 		idsStr += QString(", %2").arg(id.v);
 	}
 	return idsStr + "]";
-}
-
-bytes::vector ProtocolSecretFromPassword(const QString &password) {
-	const auto size = password.size();
-	if (size % 2) {
-		return {};
-	}
-	const auto length = size / 2;
-	const auto fromHex = [](QChar ch) -> int {
-		const auto code = int(ch.unicode());
-		if (code >= '0' && code <= '9') {
-			return (code - '0');
-		} else if (code >= 'A' && code <= 'F') {
-			return 10 + (code - 'A');
-		} else if (ch >= 'a' && ch <= 'f') {
-			return 10 + (code - 'a');
-		}
-		return -1;
-	};
-	auto result = bytes::vector(length);
-	for (auto i = 0; i != length; ++i) {
-		const auto high = fromHex(password[2 * i]);
-		const auto low = fromHex(password[2 * i + 1]);
-		if (high < 0 || low < 0) {
-			return {};
-		}
-		result[i] = static_cast<gsl::byte>(high * 16 + low);
-	}
-	return result;
 }
 
 bool IsGoodModExpFirst(const openssl::BigNum &modexp, const openssl::BigNum &prime) {
@@ -219,7 +177,7 @@ ModExpFirst CreateModExp(
 	ModExpFirst result;
 	constexpr auto kMaxModExpFirstTries = 5;
 	for (auto tries = 0; tries != kMaxModExpFirstTries; ++tries) {
-		bytes::set_random(result.randomPower);
+		FillRandom(result.randomPower);
 		for (auto i = 0; i != ModExpFirst::kRandomPowerSize; ++i) {
 			result.randomPower[i] ^= randomSeed[i];
 		}
@@ -299,144 +257,134 @@ bool parsePQ(const QByteArray &pqStr, QByteArray &pStr, QByteArray &qStr) {
 
 } // namespace
 
-Connection::Connection(not_null<Instance*> instance) : _instance(instance) {
+Connection::Connection(Instance *instance) : _instance(instance) {
 }
 
 void Connection::start(SessionData *sessionData, ShiftedDcId shiftedDcId) {
-	Expects(_thread == nullptr && _private == nullptr);
+	Expects(thread == nullptr && data == nullptr);
 
-	_thread = std::make_unique<Thread>();
-	auto newData = std::make_unique<ConnectionPrivate>(
-		_instance,
-		_thread.get(),
-		this,
-		sessionData,
-		shiftedDcId);
+	thread = std::make_unique<Thread>();
+	auto newData = std::make_unique<ConnectionPrivate>(_instance, thread.get(), this, sessionData, shiftedDcId);
 
 	// will be deleted in the thread::finished signal
-	_private = newData.release();
-	_thread->start();
+	data = newData.release();
+	thread->start();
 }
 
 void Connection::kill() {
-	Expects(_private != nullptr && _thread != nullptr);
-
-	_private->stop();
-	_private = nullptr;
-	_thread->quit();
+	Expects(data != nullptr && thread != nullptr);
+	data->stop();
+	data = nullptr;
+	thread->quit();
 }
 
 void Connection::waitTillFinish() {
-	Expects(_private == nullptr && _thread != nullptr);
+	Expects(data == nullptr && thread != nullptr);
 
 	DEBUG_LOG(("Waiting for connectionThread to finish"));
-	_thread->wait();
-	_thread.reset();
+	thread->wait();
+	thread.reset();
 }
 
 int32 Connection::state() const {
-	Expects(_private != nullptr && _thread != nullptr);
+	Expects(data != nullptr && thread != nullptr);
 
-	return _private->getState();
+	return data->getState();
 }
 
 QString Connection::transport() const {
-	Expects(_private != nullptr && _thread != nullptr);
+	Expects(data != nullptr && thread != nullptr);
 
-	return _private->transport();
+	return data->transport();
 }
 
 Connection::~Connection() {
-	Expects(_private == nullptr);
-
-	if (_thread) {
+	Expects(data == nullptr);
+	if (thread) {
 		waitTillFinish();
 	}
 }
 
-void ConnectionPrivate::appendTestConnection(
-		DcOptions::Variants::Protocol protocol,
-		const QString &ip,
-		int port,
-		const bytes::vector &protocolSecret) {
-	QWriteLocker lock(&stateConnMutex);
-
-	const auto priority = (qthelp::is_ipv6(ip) ? 0 : 1)
-		+ (protocol == DcOptions::Variants::Tcp ? 1 : 0)
-		+ (protocolSecret.empty() ? 0 : 1);
-	_testConnections.push_back({
-		AbstractConnection::create(protocol, thread()),
-		priority
-	});
-	auto weak = _testConnections.back().data.get();
-	connect(weak, &AbstractConnection::error, [=](int errorCode) {
-		onError(weak, errorCode);
-	});
-	connect(weak, &AbstractConnection::receivedSome, [=] {
-		onReceivedSome();
-	});
+void ConnectionPrivate::createConn(bool createIPv4, bool createIPv6) {
+	destroyConn();
+	if (createIPv4) {
+		QWriteLocker lock(&stateConnMutex);
+		_conn4 = AbstractConnection::create(_dcType, thread());
+		connect(_conn4, SIGNAL(error(qint32)), this, SLOT(onError4(qint32)));
+		connect(_conn4, SIGNAL(receivedSome()), this, SLOT(onReceivedSome()));
+	}
+	if (createIPv6) {
+		QWriteLocker lock(&stateConnMutex);
+		_conn6 = AbstractConnection::create(_dcType, thread());
+		connect(_conn6, SIGNAL(error(qint32)), this, SLOT(onError6(qint32)));
+		connect(_conn6, SIGNAL(receivedSome()), this, SLOT(onReceivedSome()));
+	}
 	firstSentAt = 0;
-	if (_oldConnection) {
-		_oldConnection = false;
+	if (oldConnection) {
+		oldConnection = false;
 		DEBUG_LOG(("This connection marked as not old!"));
 	}
-	_oldConnectionTimer.callOnce(kMarkConnectionOldTimeout);
-	connect(weak, &AbstractConnection::connected, [=] {
-		onConnected(weak);
-	});
-	connect(weak, &AbstractConnection::disconnected, [=] {
-		onDisconnected(weak);
-	});
-
-	const auto dcId = MTP::bareDcId(_shiftedDcId);
-	const auto simpleDcId = MTP::isTemporaryDcId(dcId)
-		? MTP::getRealIdFromTemporaryDcId(dcId)
-		: dcId;
-	const auto protocolDcId = (_dcType == DcType::MediaDownload)
-		? -simpleDcId
-		: simpleDcId;
-	InvokeQueued(_testConnections.back().data, [=] {
-		weak->connectToServer(ip, port, protocolSecret, protocolDcId);
-	});
+	oldConnectionTimer.start(MTPConnectionOldTimeout);
 }
 
-void ConnectionPrivate::destroyAllConnections() {
-	_waitForBetterTimer.cancel();
-	_waitForReceivedTimer.cancel();
-	_waitForConnectedTimer.cancel();
-	_testConnections.clear();
-	_connection = nullptr;
+void ConnectionPrivate::destroyConn(AbstractConnection **conn) {
+	if (conn) {
+		AbstractConnection *toDisconnect = nullptr;
+
+		{
+			QWriteLocker lock(&stateConnMutex);
+			if (*conn) {
+				toDisconnect = *conn;
+				disconnect(*conn, SIGNAL(connected()), nullptr, nullptr);
+				disconnect(*conn, SIGNAL(disconnected()), nullptr, nullptr);
+				disconnect(*conn, SIGNAL(error(qint32)), nullptr, nullptr);
+				disconnect(*conn, SIGNAL(receivedData()), nullptr, nullptr);
+				disconnect(*conn, SIGNAL(receivedSome()), nullptr, nullptr);
+				*conn = nullptr;
+			}
+		}
+		if (toDisconnect) {
+			toDisconnect->disconnectFromServer();
+			toDisconnect->deleteLater();
+		}
+	} else {
+		destroyConn(&_conn4);
+		destroyConn(&_conn6);
+		_conn = nullptr;
+	}
 }
 
-ConnectionPrivate::ConnectionPrivate(
-	not_null<Instance*> instance,
-	not_null<QThread*> thread,
-	not_null<Connection*> owner,
-	not_null<SessionData*> data,
-	ShiftedDcId shiftedDcId)
-: QObject(nullptr)
+ConnectionPrivate::ConnectionPrivate(Instance *instance, QThread *thread, Connection *owner, SessionData *data, ShiftedDcId shiftedDcId) : QObject()
 , _instance(instance)
 , _state(DisconnectedState)
 , _shiftedDcId(shiftedDcId)
 , _owner(owner)
-, _retryTimer(thread, [=] { retryByTimer(); })
-, _oldConnectionTimer(thread, [=] { markConnectionOld(); })
-, _waitForConnectedTimer(thread, [=] { waitConnectedFailed(); })
-, _waitForReceivedTimer(thread, [=] { waitReceivedFailed(); })
-, _waitForBetterTimer(thread, [=] { waitBetterFailed(); })
-, _waitForReceived(kMinReceiveTimeout)
-, _waitForConnected(kMinConnectedTimeout)
-, _pingSender(thread, [=] { sendPingByTimer(); })
+, _waitForReceived(MTPMinReceiveDelay)
+, _waitForConnected(MTPMinConnectDelay)
+//, sessionDataMutex(QReadWriteLock::Recursive)
 , sessionData(data) {
-	Expects(_shiftedDcId != 0);
-
+	oldConnectionTimer.moveToThread(thread);
+	_waitForConnectedTimer.moveToThread(thread);
+	_waitForReceivedTimer.moveToThread(thread);
+	_waitForIPv4Timer.moveToThread(thread);
+	_pingSender.moveToThread(thread);
+	retryTimer.moveToThread(thread);
 	moveToThread(thread);
 
-	connect(thread, &QThread::started, this, [=] { connectToServer(); });
-	connect(thread, &QThread::finished, this, [=] { finishAndDestroy(); });
+	Expects(_shiftedDcId != 0);
+
+	connect(thread, &QThread::started, this, [this] { connectToServer(); });
+	connect(thread, &QThread::finished, this, [this] { finishAndDestroy(); });
 	connect(this, SIGNAL(finished(internal::Connection*)), _instance, SLOT(connectionFinished(internal::Connection*)), Qt::QueuedConnection);
 
+	connect(&retryTimer, SIGNAL(timeout()), this, SLOT(retryByTimer()));
+	connect(&_waitForConnectedTimer, SIGNAL(timeout()), this, SLOT(onWaitConnectedFailed()));
+	connect(&_waitForReceivedTimer, SIGNAL(timeout()), this, SLOT(onWaitReceivedFailed()));
+	connect(&_waitForIPv4Timer, SIGNAL(timeout()), this, SLOT(onWaitIPv4Failed()));
+	connect(&oldConnectionTimer, SIGNAL(timeout()), this, SLOT(onOldConnection()));
+	connect(&_pingSender, SIGNAL(timeout()), this, SLOT(onPingSender()));
 	connect(sessionData->owner(), SIGNAL(authKeyCreated()), this, SLOT(updateAuthKey()), Qt::QueuedConnection);
+
 	connect(sessionData->owner(), SIGNAL(needToRestart()), this, SLOT(restartNow()), Qt::QueuedConnection);
 	connect(this, SIGNAL(needToReceive()), sessionData->owner(), SLOT(tryToReceive()), Qt::QueuedConnection);
 	connect(this, SIGNAL(stateChanged(qint32)), sessionData->owner(), SLOT(onConnectionStateChange(qint32)), Qt::QueuedConnection);
@@ -476,8 +424,8 @@ int32 ConnectionPrivate::getState() const {
 	QReadLocker lock(&stateConnMutex);
 	int32 result = _state;
 	if (_state < 0) {
-		if (_retryTimer.isActive()) {
-			result = int32(getms(true) - _retryWillFinish);
+		if (retryTimer.isActive()) {
+			result = int32(getms(true) - retryWillFinish);
 			if (result >= 0) {
 				result = -1;
 			}
@@ -488,12 +436,12 @@ int32 ConnectionPrivate::getState() const {
 
 QString ConnectionPrivate::transport() const {
 	QReadLocker lock(&stateConnMutex);
-	if (!_connection || (_state < 0)) {
+	if ((!_conn4 && !_conn6) || (_conn4 && _conn6) || (_state < 0)) {
 		return QString();
 	}
-
-	Assert(_connectionOptions != nullptr);
-	return _connection->transport();
+	QString result = (_conn4 ? _conn4 : _conn6)->transport();
+	if (!result.isEmpty() && Global::TryIPv6()) result += (_conn4 ? "/IPv4" : "/IPv6");
+	return result;
 }
 
 bool ConnectionPrivate::setState(int32 state, int32 ifState) {
@@ -505,9 +453,9 @@ bool ConnectionPrivate::setState(int32 state, int32 ifState) {
 	if (_state == state) return false;
 	_state = state;
 	if (state < 0) {
-		_retryTimeout = -state;
-		_retryTimer.callOnce(_retryTimeout);
-		_retryWillFinish = getms(true) + _retryTimeout;
+		retryTimeout = -state;
+		retryTimer.start(retryTimeout);
+		retryWillFinish = getms(true) + retryTimeout;
 	}
 	emit stateChanged(state);
 	return true;
@@ -728,7 +676,7 @@ mtpMsgId ConnectionPrivate::placeToContainer(mtpRequest &toSendRequest, mtpMsgId
 
 void ConnectionPrivate::tryToSend() {
 	QReadLocker lockFinished(&sessionDataMutex);
-	if (!sessionData || !_connection) {
+	if (!sessionData || !_conn) {
 		return;
 	}
 
@@ -749,7 +697,7 @@ void ConnectionPrivate::tryToSend() {
 			ping.write(*pingRequest);
 			DEBUG_LOG(("MTP Info: sending ping, ping_id: %1").arg(_pingIdToSend));
 		} else {
-			MTPPing_delay_disconnect ping(MTP_long(_pingIdToSend), MTP_int(kPingDelayDisconnect));
+			MTPPing_delay_disconnect ping(MTP_long(_pingIdToSend), MTP_int(MTPPingDelayDisconnect));
 			uint32 pingSize = ping.innerLength() >> 2; // copy from Session::send
 			pingRequest = mtpRequestData::prepare(pingSize);
 			ping.write(*pingRequest);
@@ -757,11 +705,11 @@ void ConnectionPrivate::tryToSend() {
 		}
 
 		pingRequest->msDate = getms(true); // > 0 - can send without container
-		_pingSendAt = pingRequest->msDate + kPingSendAfter;
+		_pingSendAt = pingRequest->msDate + (MTPPingSendAfterAuto * 1000LL);
 		pingRequest->requestId = 0; // dont add to haveSent / wereAcked maps
 
 		if (_shiftedDcId == bareDcId(_shiftedDcId) && !prependOnly) { // main session
-			_pingSender.callOnce(kPingSendAfterForce);
+			_pingSender.start(MTPPingSendAfter * 1000);
 		}
 
 		_pingId = _pingIdToSend;
@@ -820,7 +768,7 @@ void ConnectionPrivate::tryToSend() {
 			stateRequest->msDate = getms(true); // > 0 - can send without container
 			stateRequest->requestId = reqid();// add to haveSent / wereAcked maps, but don't add to requestMap
 		}
-		if (_connection->usingHttpWait()) {
+		if (_conn->usingHttpWait()) {
 			MTPHttpWait req(MTP_http_wait(MTP_int(100), MTP_int(30), MTP_int(25000)));
 
 			httpWaitRequest = mtpRequestData::prepare(req.innerLength() >> 2);
@@ -834,9 +782,8 @@ void ConnectionPrivate::tryToSend() {
 	MTPInitConnection<mtpRequest> initWrapper;
 	int32 initSize = 0, initSizeInInts = 0;
 	if (needsLayer) {
-		Assert(_connectionOptions != nullptr);
-		auto systemLangCode = _connectionOptions->systemLangCode;
-		auto cloudLangCode = _connectionOptions->cloudLangCode;
+		auto systemLangCode = sessionData->systemLangCode();
+		auto cloudLangCode = sessionData->cloudLangCode();
 		auto langPack = "tdesktop";
 		auto deviceModel = (_dcType == DcType::Cdn) ? "n/a" : cApiDeviceModel();
 		auto systemVersion = (_dcType == DcType::Cdn) ? "n/a" : cApiSystemVersion();
@@ -1021,12 +968,12 @@ void ConnectionPrivate::retryByTimer() {
 	QReadLocker lockFinished(&sessionDataMutex);
 	if (!sessionData) return;
 
-	if (_retryTimeout < 3) {
-		++_retryTimeout;
-	} else if (_retryTimeout == 3) {
-		_retryTimeout = 1000;
-	} else if (_retryTimeout < 64000) {
-		_retryTimeout *= 2;
+	if (retryTimeout < 3) {
+		++retryTimeout;
+	} else if (retryTimeout == 3) {
+		retryTimeout = 1000;
+	} else if (retryTimeout < 64000) {
+		retryTimeout *= 2;
 	}
 	if (keyId == kRecreateKeyId) {
 		if (sessionData->getKey()) {
@@ -1041,35 +988,23 @@ void ConnectionPrivate::retryByTimer() {
 }
 
 void ConnectionPrivate::restartNow() {
-	_retryTimeout = 1;
-	_retryTimer.cancel();
+	retryTimeout = 1;
+	retryTimer.stop();
 	restart();
 }
 
 void ConnectionPrivate::connectToServer(bool afterConfig) {
 	if (_finished) {
-		DEBUG_LOG(("MTP Error: "
-			"connectToServer() called for finished connection!"));
+		DEBUG_LOG(("MTP Error: connectToServer() called for finished connection!"));
 		return;
-	}
-	auto hasKey = true;
-	{
-		QReadLocker lockFinished(&sessionDataMutex);
-		if (!sessionData) {
-			DEBUG_LOG(("MTP Error: "
-				"connectToServer() called for stopped connection!"));
-			return;
-		}
-		_connectionOptions = std::make_unique<ConnectionOptions>(
-			sessionData->connectionOptions());
-		hasKey = (sessionData->getKey() != nullptr);
 	}
 	auto bareDc = bareDcId(_shiftedDcId);
 	_dcType = _instance->dcOptions()->dcType(_shiftedDcId);
-
-	// Use media_only addresses only if key for this dc is already created.
-	if (_dcType == DcType::MediaDownload && !hasKey) {
-		_dcType = DcType::Regular;
+	if (_dcType == DcType::MediaDownload) { // using media_only addresses only if key for this dc is already created
+		QReadLocker lockFinished(&sessionDataMutex);
+		if (!sessionData || !sessionData->getKey()) {
+			_dcType = DcType::Regular;
+		}
 	} else if (_dcType == DcType::Cdn && !_instance->isKeysDestroyer()) {
 		if (!_instance->dcOptions()->hasCDNKeysForDc(bareDc)) {
 			requestCDNConfig();
@@ -1077,89 +1012,58 @@ void ConnectionPrivate::connectToServer(bool afterConfig) {
 		}
 	}
 
-	if (afterConfig && (!_testConnections.empty() || _connection)) {
-		return;
-	}
-
-	destroyAllConnections();
-	if (_connectionOptions->proxy.type == ProxyData::Type::Mtproto) {
-		appendTestConnection(
-			DcOptions::Variants::Tcp,
-			_connectionOptions->proxy.host,
-			_connectionOptions->proxy.port,
-			ProtocolSecretFromPassword(_connectionOptions->proxy.password));
-	} else {
-		using Variants = DcOptions::Variants;
-		const auto special = (_dcType == DcType::Temporary);
-		const auto variants = _instance->dcOptions()->lookup(
-			bareDc,
-			_dcType,
-			_connectionOptions->proxy.type != ProxyData::Type::None);
-		const auto useIPv4 = special ? true : _connectionOptions->useIPv4;
-		const auto useIPv6 = special ? false : _connectionOptions->useIPv6;
-		const auto useTcp = special ? true : _connectionOptions->useTcp;
-		const auto useHttp = special ? false : _connectionOptions->useHttp;
-		const auto skipAddress = !useIPv4
-			? Variants::IPv4
-			: !useIPv6
-			? Variants::IPv6
-			: Variants::AddressTypeCount;
-		const auto skipProtocol = !useTcp
-			? Variants::Tcp
-			: !useHttp
-			? Variants::Http
-			: Variants::ProtocolCount;
-		for (auto address = 0; address != Variants::AddressTypeCount; ++address) {
-			if (address == skipAddress) {
-				continue;
-			}
-			for (auto protocol = 0; protocol != Variants::ProtocolCount; ++protocol) {
-				if (protocol == skipProtocol) {
-					continue;
-				}
-				for (const auto &endpoint : variants.data[address][protocol]) {
-					appendTestConnection(
-						static_cast<Variants::Protocol>(protocol),
-						QString::fromStdString(endpoint.ip),
-						endpoint.port,
-						endpoint.secret);
-				}
-			}
-		}
-	}
-	if (_testConnections.empty()) {
+	using Variants = DcOptions::Variants;
+	auto kIPv4 = Variants::IPv4;
+	auto kIPv6 = Variants::IPv6;
+	auto kTcp = Variants::Tcp;
+	auto kHttp = Variants::Http;
+	auto variants = _instance->dcOptions()->lookup(bareDc, _dcType);
+	auto noIPv4 = (_dcType == DcType::Temporary) ? (variants.data[kIPv4][kTcp].port == 0) : (variants.data[kIPv4][kHttp].port == 0);
+	auto noIPv6 = (_dcType == DcType::Temporary) ? true : (!Global::TryIPv6() || (variants.data[kIPv6][kHttp].port == 0));
+	if (noIPv4 && noIPv6) {
 		if (_instance->isKeysDestroyer()) {
-			LOG(("MTP Error: DC %1 options for not found for auth key destruction!").arg(_shiftedDcId));
+			LOG(("MTP Error: DC %1 options for IPv4 over HTTP not found for auth key destruction!").arg(_shiftedDcId));
+			if (Global::TryIPv6() && noIPv6) LOG(("MTP Error: DC %1 options for IPv6 over HTTP not found for auth key destruction!").arg(_shiftedDcId));
 			emit _instance->keyDestroyed(_shiftedDcId);
 			return;
 		} else if (afterConfig) {
-			LOG(("MTP Error: DC %1 options for not found right after config load!").arg(_shiftedDcId));
+			LOG(("MTP Error: DC %1 options for IPv4 over HTTP not found right after config load!").arg(_shiftedDcId));
+			if (Global::TryIPv6() && noIPv6) LOG(("MTP Error: DC %1 options for IPv6 over HTTP not found right after config load!").arg(_shiftedDcId));
 			return restart();
 		}
-		DEBUG_LOG(("MTP Info: DC %1 options not found, waiting for config").arg(_shiftedDcId));
+		DEBUG_LOG(("MTP Info: DC %1 options for IPv4 over HTTP not found, waiting for config").arg(_shiftedDcId));
+		if (Global::TryIPv6() && noIPv6) DEBUG_LOG(("MTP Info: DC %1 options for IPv6 over HTTP not found, waiting for config").arg(_shiftedDcId));
 		connect(_instance, SIGNAL(configLoaded()), this, SLOT(onConfigLoaded()), Qt::UniqueConnection);
-		InvokeQueued(_instance, [instance = _instance] {
-			instance->requestConfig();
-		});
+		InvokeQueued(_instance, [instance = _instance] { instance->requestConfig(); });
 		return;
 	}
 
-	if (!_startedConnectingAt) {
-		_startedConnectingAt = getms(true);
-	} else if (getms(true) - _startedConnectingAt > kRequestConfigTimeout) {
-		InvokeQueued(_instance, [instance = _instance] {
-			instance->requestConfigIfOld();
-		});
-	}
+	if (afterConfig && (_conn4 || _conn6)) return;
 
-	_retryTimer.cancel();
-	_waitForConnectedTimer.cancel();
+	createConn(!noIPv4, !noIPv6);
+	retryTimer.stop();
+	_waitForConnectedTimer.stop();
 
 	setState(ConnectingState);
 	_pingId = _pingMsgId = _pingIdToSend = _pingSendAt = 0;
-	_pingSender.cancel();
+	_pingSender.stop();
 
-	_waitForConnectedTimer.callOnce(_waitForConnected);
+	if (!noIPv4) DEBUG_LOG(("MTP Info: creating IPv4 connection to %1:%2 (tcp) and %3:%4 (http)...").arg(variants.data[kIPv4][kTcp].ip.c_str()).arg(variants.data[kIPv4][kTcp].port).arg(variants.data[kIPv4][kHttp].ip.c_str()).arg(variants.data[kIPv4][kHttp].port));
+	if (!noIPv6) DEBUG_LOG(("MTP Info: creating IPv6 connection to [%1]:%2 (tcp) and [%3]:%4 (http)...").arg(variants.data[kIPv6][kTcp].ip.c_str()).arg(variants.data[kIPv6][kTcp].port).arg(variants.data[kIPv4][kHttp].ip.c_str()).arg(variants.data[kIPv4][kHttp].port));
+
+	_waitForConnectedTimer.start(_waitForConnected);
+	if (auto conn = _conn4) {
+		connect(conn, SIGNAL(connected()), this, SLOT(onConnected4()));
+		connect(conn, SIGNAL(disconnected()), this, SLOT(onDisconnected4()));
+		conn->connectTcp(variants.data[kIPv4][kTcp]);
+		conn->connectHttp(variants.data[kIPv4][kHttp]);
+	}
+	if (auto conn = _conn6) {
+		connect(conn, SIGNAL(connected()), this, SLOT(onConnected6()));
+		connect(conn, SIGNAL(disconnected()), this, SLOT(onDisconnected6()));
+		conn->connectTcp(variants.data[kIPv6][kTcp]);
+		conn->connectHttp(variants.data[kIPv6][kHttp]);
+	}
 }
 
 void ConnectionPrivate::restart() {
@@ -1168,8 +1072,8 @@ void ConnectionPrivate::restart() {
 
 	DEBUG_LOG(("MTP Info: restarting Connection"));
 
-	_waitForReceivedTimer.cancel();
-	_waitForConnectedTimer.cancel();
+	_waitForReceivedTimer.stop();
+	_waitForConnectedTimer.stop();
 
 	auto key = sessionData->getKey();
 	if (key) {
@@ -1195,19 +1099,18 @@ void ConnectionPrivate::restart() {
 		resetSession();
 	}
 	restarted = true;
-	if (_retryTimer.isActive()) return;
+	if (retryTimer.isActive()) return;
 
-	DEBUG_LOG(("MTP Info: restart timeout: %1ms").arg(_retryTimeout));
-	setState(-_retryTimeout);
+	DEBUG_LOG(("MTP Info: restart timeout: %1ms").arg(retryTimeout));
+	setState(-retryTimeout);
 }
 
 void ConnectionPrivate::onSentSome(uint64 size) {
 	if (!_waitForReceivedTimer.isActive()) {
 		auto remain = static_cast<uint64>(_waitForReceived);
-		if (!_oldConnection) {
-			// 8kb / sec, so 512 kb give 64 sec
-			auto remainBySize = size * _waitForReceived / 8192;
-			remain = snap(remainBySize, remain, uint64(kMaxReceiveTimeout));
+		if (!oldConnection) {
+			auto remainBySize = size * _waitForReceived / 8192; // 8kb / sec, so 512 kb give 64 sec
+			remain = snap(remainBySize, remain, uint64(MTPMaxReceiveDelay));
 			if (remain != _waitForReceived) {
 				DEBUG_LOG(("Checking connect for request with size %1 bytes, delay will be %2").arg(size).arg(remain));
 			}
@@ -1217,42 +1120,40 @@ void ConnectionPrivate::onSentSome(uint64 size) {
 		} else if (isDownloadDcId(_shiftedDcId)) {
 			remain *= kDownloadSessionsCount;
 		}
-		_waitForReceivedTimer.callOnce(remain);
+		_waitForReceivedTimer.start(remain);
 	}
 	if (!firstSentAt) firstSentAt = getms(true);
 }
 
 void ConnectionPrivate::onReceivedSome() {
-	if (_oldConnection) {
-		_oldConnection = false;
+	if (oldConnection) {
+		oldConnection = false;
 		DEBUG_LOG(("This connection marked as not old!"));
 	}
-	_oldConnectionTimer.callOnce(kMarkConnectionOldTimeout);
-	_waitForReceivedTimer.cancel();
+	oldConnectionTimer.start(MTPConnectionOldTimeout);
+	_waitForReceivedTimer.stop();
 	if (firstSentAt > 0) {
 		int32 ms = getms(true) - firstSentAt;
 		DEBUG_LOG(("MTP Info: response in %1ms, _waitForReceived: %2ms").arg(ms).arg(_waitForReceived));
 
-		if (ms > 0 && ms * 2 < int32(_waitForReceived)) {
-			_waitForReceived = qMax(ms * 2, int32(kMinReceiveTimeout));
-		}
+		if (ms > 0 && ms * 2 < int32(_waitForReceived)) _waitForReceived = qMax(ms * 2, int32(MTPMinReceiveDelay));
 		firstSentAt = -1;
 	}
 }
 
-void ConnectionPrivate::markConnectionOld() {
-	_oldConnection = true;
-	_waitForReceived = kMinReceiveTimeout;
+void ConnectionPrivate::onOldConnection() {
+	oldConnection = true;
+	_waitForReceived = MTPMinReceiveDelay;
 	DEBUG_LOG(("This connection marked as old! _waitForReceived now %1ms").arg(_waitForReceived));
 }
 
-void ConnectionPrivate::sendPingByTimer() {
+void ConnectionPrivate::onPingSender() {
 	if (_pingId) {
-		if (_pingSendAt + kPingSendAfterForce - kPingSendAfter - TimeMs(1000) < getms(true)) {
-			LOG(("Could not send ping for some seconds, restarting..."));
+		if (_pingSendAt + (MTPPingSendAfter - MTPPingSendAfterAuto - 1) * 1000LL < getms(true)) {
+			LOG(("Could not send ping for MTPPingSendAfter seconds, restarting..."));
 			return restart();
 		} else {
-			_pingSender.callOnce(_pingSendAt + kPingSendAfterForce - kPingSendAfter - getms(true));
+			_pingSender.start(_pingSendAt + (MTPPingSendAfter - MTPPingSendAfterAuto) * 1000LL - getms(true));
 		}
 	} else {
 		emit needToSendAsync();
@@ -1267,32 +1168,26 @@ void ConnectionPrivate::onPingSendForce() {
 	}
 }
 
-void ConnectionPrivate::waitReceivedFailed() {
-	Expects(_connectionOptions != nullptr);
-
-	if (!_connectionOptions->useTcp) {
+void ConnectionPrivate::onWaitReceivedFailed() {
+	if (Global::ConnectionType() != dbictAuto && Global::ConnectionType() != dbictTcpProxy) {
 		return;
 	}
 
 	DEBUG_LOG(("MTP Info: bad connection, _waitForReceived: %1ms").arg(_waitForReceived));
-	if (_waitForReceived < kMaxReceiveTimeout) {
+	if (_waitForReceived < MTPMaxReceiveDelay) {
 		_waitForReceived *= 2;
 	}
 	doDisconnect();
 	restarted = true;
-	if (_retryTimer.isActive()) {
-		return;
-	}
+	if (retryTimer.isActive()) return;
 
 	DEBUG_LOG(("MTP Info: immediate restart!"));
 	InvokeQueued(this, [this] { connectToServer(); });
 }
 
-void ConnectionPrivate::waitConnectedFailed() {
+void ConnectionPrivate::onWaitConnectedFailed() {
 	DEBUG_LOG(("MTP Info: can't connect in %1ms").arg(_waitForConnected));
-	if (_waitForConnected < kMaxConnectedTimeout) {
-		_waitForConnected *= 2;
-	}
+	if (_waitForConnected < MTPMaxConnectDelay) _waitForConnected *= 2;
 
 	doDisconnect();
 	restarted = true;
@@ -1301,12 +1196,21 @@ void ConnectionPrivate::waitConnectedFailed() {
 	InvokeQueued(this, [this] { connectToServer(); });
 }
 
-void ConnectionPrivate::waitBetterFailed() {
-	confirmBestConnection();
+void ConnectionPrivate::onWaitIPv4Failed() {
+	_conn = _conn6;
+	destroyConn(&_conn4);
+
+	if (_conn) {
+		DEBUG_LOG(("MTP Info: can't connect through IPv4, using IPv6 connection."));
+
+		updateAuthKey();
+	} else {
+		restart();
+	}
 }
 
 void ConnectionPrivate::doDisconnect() {
-	destroyAllConnections();
+	destroyConn();
 
 	{
 		QReadLocker lockFinished(&sessionDataMutex);
@@ -1359,9 +1263,9 @@ void ConnectionPrivate::handleReceived() {
 		return restartOnError();
 	}
 
-	while (!_connection->received().empty()) {
-		auto intsBuffer = std::move(_connection->received().front());
-		_connection->received().pop_front();
+	while (!_conn->received().empty()) {
+		auto intsBuffer = std::move(_conn->received().front());
+		_conn->received().pop_front();
 
 		constexpr auto kExternalHeaderIntsCount = 6U; // 2 auth_key_id, 4 msg_key
 		constexpr auto kEncryptedHeaderIntsCount = 8U; // 2 salt, 2 session, 2 msg_id, 1 seq_no, 1 length
@@ -1547,13 +1451,12 @@ void ConnectionPrivate::handleReceived() {
 
 			return restartOnError();
 		}
-		_retryTimeout = 1; // reset restart() timer
+		retryTimeout = 1; // reset restart() timer
 
 		if (!sessionData->isCheckedKey()) {
 			DEBUG_LOG(("MTP Info: marked auth key as checked"));
 			sessionData->setCheckedKey(true);
 		}
-		_startedConnectingAt = TimeMs(0);
 
 		if (!wasConnected) {
 			if (getState() == ConnectedState) {
@@ -1561,7 +1464,7 @@ void ConnectionPrivate::handleReceived() {
 			}
 		}
 	}
-	if (_connection->needHttpWait()) {
+	if (_conn->needHttpWait()) {
 		emit sendHttpWaitAsync();
 	}
 }
@@ -2368,98 +2271,77 @@ void ConnectionPrivate::resendMany(QVector<quint64> msgIds, qint64 msCanWait, bo
 	emit resendManyAsync(msgIds, msCanWait, forceContainer, sendMsgStateInfo);
 }
 
-void ConnectionPrivate::onConnected(
-		not_null<AbstractConnection*> connection) {
+void ConnectionPrivate::onConnected4() {
+	_waitForConnected = MTPMinConnectDelay;
+	_waitForConnectedTimer.stop();
+
+	_waitForIPv4Timer.stop();
+
 	QReadLocker lockFinished(&sessionDataMutex);
 	if (!sessionData) return;
 
-	disconnect(connection, &AbstractConnection::connected, nullptr, nullptr);
-	if (!connection->isConnected()) {
-		LOG(("Connection Error: not connected in onConnected(), "
-			"state: %1").arg(connection->debugState()));
+	disconnect(_conn4, SIGNAL(connected()), this, SLOT(onConnected4()));
+	if (!_conn4->isConnected()) {
+		LOG(("Connection Error: not connected in onConnected4(), state: %1").arg(_conn4->debugState()));
 
 		lockFinished.unlock();
 		return restart();
 	}
 
-	_waitForConnected = kMinConnectedTimeout;
-	_waitForConnectedTimer.cancel();
+	_conn = _conn4;
+	destroyConn(&_conn6);
 
-	const auto i = ranges::find(
-		_testConnections,
-		connection.get(),
-		[](const TestConnection &test) { return test.data.get(); });
-	Assert(i != end(_testConnections));
-	const auto my = i->priority;
-	const auto j = ranges::find_if(
-		_testConnections,
-		[&](const TestConnection &test) { return test.priority > my; });
-	if (j != end(_testConnections)) {
-		DEBUG_LOG(("MTP Info: connection %1 succeed, "
-			"waiting for %2.").arg(i->data->tag()).arg(j->data->tag()));
-		_waitForBetterTimer.callOnce(kWaitForBetterTimeout);
-	} else {
-		DEBUG_LOG(("MTP Info: connection through IPv4 succeed."));
-		_waitForBetterTimer.cancel();
-		_connection = std::move(i->data);
-		_testConnections.clear();
+	DEBUG_LOG(("MTP Info: connection through IPv4 succeed."));
 
-		lockFinished.unlock();
-		updateAuthKey();
-	}
-}
-
-void ConnectionPrivate::onDisconnected(
-		not_null<AbstractConnection*> connection) {
-	removeTestConnection(connection);
-
-	if (_testConnections.empty()) {
-		if (!_connection || _connection == connection.get()) {
-			destroyAllConnections();
-			restart();
-		}
-	} else {
-		confirmBestConnection();
-	}
-}
-
-void ConnectionPrivate::confirmBestConnection() {
-	if (_waitForBetterTimer.isActive()) {
-		return;
-	}
-	const auto i = ranges::max_element(
-		_testConnections,
-		std::less<>(),
-		[](const TestConnection &test) {
-			return test.data->isConnected() ? test.priority : -1;
-		});
-	Assert(i != end(_testConnections));
-	if (!i->data->isConnected()) {
-		return;
-	}
-
-	DEBUG_LOG(("MTP Info: can't connect through better, using %1."
-		).arg(i->data->tag()));
-
-	_connection = std::move(i->data);
-	_testConnections.clear();
-
+	lockFinished.unlock();
 	updateAuthKey();
 }
 
-void ConnectionPrivate::removeTestConnection(
-		not_null<AbstractConnection*> connection) {
-	_testConnections.erase(
-		ranges::remove(
-			_testConnections,
-			connection.get(),
-			[](const TestConnection &test) { return test.data.get(); }),
-		end(_testConnections));
+void ConnectionPrivate::onConnected6() {
+	_waitForConnected = MTPMinConnectDelay;
+	_waitForConnectedTimer.stop();
+
+	QReadLocker lockFinished(&sessionDataMutex);
+	if (!sessionData) return;
+
+	disconnect(_conn6, SIGNAL(connected()), this, SLOT(onConnected6()));
+	if (!_conn6->isConnected()) {
+		LOG(("Connection Error: not connected in onConnected(), state: %1").arg(_conn6->debugState()));
+
+		lockFinished.unlock();
+		return restart();
+	}
+
+	DEBUG_LOG(("MTP Info: connection through IPv6 succeed, waiting IPv4 for %1ms.").arg(MTPIPv4ConnectionWaitTimeout));
+
+	_waitForIPv4Timer.start(MTPIPv4ConnectionWaitTimeout);
+}
+
+void ConnectionPrivate::onDisconnected4() {
+	if (_conn && _conn == _conn6) return; // disconnected the unused
+
+	if (_conn || !_conn6) {
+		destroyConn();
+		restart();
+	} else {
+		destroyConn(&_conn4);
+	}
+}
+
+void ConnectionPrivate::onDisconnected6() {
+	if (_conn && _conn == _conn4) return; // disconnected the unused
+
+	if (_conn || !_conn4) {
+		destroyConn();
+		restart();
+	} else {
+		destroyConn(&_conn6);
+	}
 }
 
 void ConnectionPrivate::updateAuthKey() 	{
 	QReadLocker lockFinished(&sessionDataMutex);
-	if (!sessionData || !_connection) return;
+	if (!sessionData || !_conn) return;
 
 	DEBUG_LOG(("AuthKey Info: Connection updating key from Session, dc %1").arg(_shiftedDcId));
 	uint64 newKeyId = 0;
@@ -2507,9 +2389,7 @@ void ConnectionPrivate::updateAuthKey() 	{
 	MTPReq_pq_multi req_pq;
 	req_pq.vnonce = _authKeyData->nonce;
 
-	connect(_connection, &AbstractConnection::receivedData, [=] {
-		pqAnswered();
-	});
+	connect(_conn, SIGNAL(receivedData()), this, SLOT(pqAnswered()));
 
 	DEBUG_LOG(("AuthKey Info: sending Req_pq..."));
 	lockFinished.unlock();
@@ -2517,13 +2397,13 @@ void ConnectionPrivate::updateAuthKey() 	{
 }
 
 void ConnectionPrivate::clearMessages() {
-	if (keyId && keyId != kRecreateKeyId && _connection) {
-		_connection->received().clear();
+	if (keyId && keyId != kRecreateKeyId && _conn) {
+		_conn->received().clear();
 	}
 }
 
 void ConnectionPrivate::pqAnswered() {
-	disconnect(_connection, &AbstractConnection::receivedData, nullptr, nullptr);
+	disconnect(_conn, SIGNAL(receivedData()), this, SLOT(pqAnswered()));
 	DEBUG_LOG(("AuthKey Info: receiving Req_pq answer..."));
 
 	MTPReq_pq::ResponseType res_pq;
@@ -2568,9 +2448,7 @@ void ConnectionPrivate::pqAnswered() {
 		return restart();
 	}
 
-	connect(_connection, &AbstractConnection::receivedData, [=] {
-		dhParamsAnswered();
-	});
+	connect(_conn, SIGNAL(receivedData()), this, SLOT(dhParamsAnswered()));
 
 	DEBUG_LOG(("AuthKey Info: sending Req_DH_params..."));
 
@@ -2614,7 +2492,7 @@ base::byte_vector ConnectionPrivate::encryptPQInnerRSA(const MTPP_Q_inner_data &
 }
 
 void ConnectionPrivate::dhParamsAnswered() {
-	disconnect(_connection, &AbstractConnection::receivedData, nullptr, nullptr);
+	disconnect(_conn, SIGNAL(receivedData()), this, SLOT(dhParamsAnswered()));
 	DEBUG_LOG(("AuthKey Info: receiving Req_DH_params answer..."));
 
 	MTPReq_DH_params::ResponseType res_DH_params;
@@ -2734,7 +2612,7 @@ void ConnectionPrivate::dhClientParamsSend() {
 
 	// gen rand 'b'
 	auto randomSeed = std::array<gsl::byte, ModExpFirst::kRandomPowerSize>();
-	bytes::set_random(randomSeed);
+	openssl::FillRandom(randomSeed);
 	auto g_b_data = CreateModExp(_authKeyData->g, _authKeyStrings->dh_prime, randomSeed);
 	if (g_b_data.modexp.empty()) {
 		LOG(("AuthKey Error: could not generate good g_b."));
@@ -2757,9 +2635,7 @@ void ConnectionPrivate::dhClientParamsSend() {
 
 	auto sdhEncString = encryptClientDHInner(client_dh_inner);
 
-	connect(_connection, &AbstractConnection::receivedData, [=] {
-		dhClientParamsAnswered();
-	});
+	connect(_conn, SIGNAL(receivedData()), this, SLOT(dhClientParamsAnswered()));
 
 	MTPSet_client_DH_params req_client_DH_params;
 	req_client_DH_params.vnonce = _authKeyData->nonce;
@@ -2800,7 +2676,7 @@ void ConnectionPrivate::dhClientParamsAnswered() {
 	QReadLocker lockFinished(&sessionDataMutex);
 	if (!sessionData) return;
 
-	disconnect(_connection, &AbstractConnection::receivedData, nullptr, nullptr);
+	disconnect(_conn, SIGNAL(receivedData()), this, SLOT(dhClientParamsAnswered()));
 	DEBUG_LOG(("AuthKey Info: receiving Req_client_DH_params answer..."));
 
 	MTPSet_client_DH_params::ResponseType res_client_DH_params;
@@ -2917,9 +2793,7 @@ void ConnectionPrivate::dhClientParamsAnswered() {
 void ConnectionPrivate::authKeyCreated() {
 	clearAuthKeyData();
 
-	connect(_connection, &AbstractConnection::receivedData, [=] {
-		handleReceived();
-	});
+	connect(_conn, SIGNAL(receivedData()), this, SLOT(handleReceived()));
 
 	if (sessionData->getSalt()) { // else receive salt in bad_server_salt first, then try to send all the requests
 		setState(ConnectedState);
@@ -2961,30 +2835,35 @@ void ConnectionPrivate::clearAuthKeyData() {
 	}
 }
 
-void ConnectionPrivate::onError(
-		not_null<AbstractConnection*> connection,
-		qint32 errorCode) {
-	if (_connection) {
-		return;
-	}
+void ConnectionPrivate::onError4(qint32 errorCode) {
+	if (_conn && _conn == _conn6) return; // error in the unused
 
 	if (errorCode == -429) {
 		LOG(("Protocol Error: -429 flood code returned!"));
 	}
-	removeTestConnection(connection);
-
-	if (_testConnections.empty()) {
-		if (!_connection || _connection == connection.get()) {
-			handleError(errorCode);
-		}
+	if (_conn || !_conn6) {
+		handleError(errorCode);
 	} else {
-		confirmBestConnection();
+		destroyConn(&_conn4);
+	}
+}
+
+void ConnectionPrivate::onError6(qint32 errorCode) {
+	if (_conn && _conn == _conn4) return; // error in the unused
+
+	if (errorCode == -429) {
+		LOG(("Protocol Error: -429 flood code returned!"));
+	}
+	if (_conn || !_conn4) {
+		handleError(errorCode);
+	} else {
+		destroyConn(&_conn6);
 	}
 }
 
 void ConnectionPrivate::handleError(int errorCode) {
-	destroyAllConnections();
-	_waitForConnectedTimer.cancel();
+	destroyConn();
+	_waitForConnectedTimer.stop();
 
 	if (errorCode == -404) {
 		if (_instance->isKeysDestroyer()) {
@@ -3026,7 +2905,7 @@ void ConnectionPrivate::sendRequestNotSecure(const TRequest &request) {
 
 		DEBUG_LOG(("AuthKey Info: sending request, size: %1, num: %2, time: %3").arg(requestSize).arg(_authKeyData->req_num).arg(buffer[5]));
 
-		_connection->sendData(buffer);
+		_conn->sendData(buffer);
 
 		onSentSome(buffer.size() * sizeof(mtpPrime));
 
@@ -3040,13 +2919,13 @@ bool ConnectionPrivate::readResponseNotSecure(TResponse &response) {
 	onReceivedSome();
 
 	try {
-		if (_connection->received().empty()) {
+		if (_conn->received().empty()) {
 			LOG(("AuthKey Error: trying to read response from empty received list"));
 			return false;
 		}
 
-		auto buffer = std::move(_connection->received().front());
-		_connection->received().pop_front();
+		auto buffer = std::move(_conn->received().front());
+		_conn->received().pop_front();
 
 		auto answer = buffer.constData();
 		auto len = buffer.size();
@@ -3141,8 +3020,8 @@ bool ConnectionPrivate::sendRequest(mtpRequest &request, bool needAnyResponse, Q
 
 	DEBUG_LOG(("MTP Info: sending request, size: %1, num: %2, time: %3").arg(fullSize + 6).arg((*request)[4]).arg((*request)[5]));
 
-	_connection->setSentEncrypted();
-	_connection->sendData(result);
+	_conn->setSentEncrypted();
+	_conn->sendData(result);
 
 	if (needAnyResponse) {
 		onSentSome(result.size() * sizeof(mtpPrime));
@@ -3189,7 +3068,7 @@ void ConnectionPrivate::unlockKey() {
 
 ConnectionPrivate::~ConnectionPrivate() {
 	clearAuthKeyData();
-	Assert(_finished && _connection == nullptr && _testConnections.empty());
+	Assert(_finished && _conn == nullptr && _conn4 == nullptr && _conn6 == nullptr);
 }
 
 void ConnectionPrivate::stop() {
@@ -3216,10 +3095,6 @@ ModExpFirst CreateModExp(int g, base::const_byte_span primeBytes, base::const_by
 
 std::vector<gsl::byte> CreateAuthKey(base::const_byte_span firstBytes, base::const_byte_span randomBytes, base::const_byte_span primeBytes) {
 	return internal::CreateAuthKey(firstBytes, randomBytes, primeBytes);
-}
-
-bytes::vector ProtocolSecretFromPassword(const QString &password) {
-	return internal::ProtocolSecretFromPassword(password);
 }
 
 } // namespace MTP

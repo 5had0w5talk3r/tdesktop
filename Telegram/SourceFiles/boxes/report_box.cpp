@@ -14,54 +14,23 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/input_fields.h"
-#include "ui/toast/toast.h"
 #include "mainwindow.h"
 
-ReportBox::ReportBox(QWidget*, not_null<PeerData*> peer)
-: _peer(peer) {
-}
-
-ReportBox::ReportBox(QWidget*, not_null<PeerData*> peer, MessageIdsList ids)
-: _peer(peer)
-, _ids(std::move(ids)) {
+ReportBox::ReportBox(QWidget*, PeerData *peer) : _peer(peer)
+, _reasonGroup(std::make_shared<Ui::RadioenumGroup<Reason>>(Reason::Spam))
+, _reasonSpam(this, _reasonGroup, Reason::Spam, lang(lng_report_reason_spam), st::defaultBoxCheckbox)
+, _reasonViolence(this, _reasonGroup, Reason::Violence, lang(lng_report_reason_violence), st::defaultBoxCheckbox)
+, _reasonPornography(this, _reasonGroup, Reason::Pornography, lang(lng_report_reason_pornography), st::defaultBoxCheckbox)
+, _reasonOther(this, _reasonGroup, Reason::Other, lang(lng_report_reason_other), st::defaultBoxCheckbox) {
 }
 
 void ReportBox::prepare() {
-	setTitle(langFactory([&] {
-		if (_ids) {
-			return lng_report_message_title;
-		} else if (_peer->isUser()) {
-			return lng_report_bot_title;
-		} else if (_peer->isMegagroup()) {
-			return lng_report_group_title;
-		} else {
-			return lng_report_title;
-		}
-	}()));
+	setTitle(langFactory(_peer->isUser() ? lng_report_bot_title : (_peer->isMegagroup() ? lng_report_group_title : lng_report_title)));
 
 	addButton(langFactory(lng_report_button), [this] { onReport(); });
 	addButton(langFactory(lng_cancel), [this] { closeBox(); });
 
-	_reasonGroup = std::make_shared<Ui::RadioenumGroup<Reason>>(
-		Reason::Spam);
-	const auto createButton = [&](
-			object_ptr<Ui::Radioenum<Reason>> &button,
-			Reason reason,
-			LangKey key) {
-		button.create(
-			this,
-			_reasonGroup,
-			reason,
-			lang(key),
-			st::defaultBoxCheckbox);
-	};
-	createButton(_reasonSpam, Reason::Spam, lng_report_reason_spam);
-	createButton(_reasonViolence, Reason::Violence, lng_report_reason_violence);
-	createButton(_reasonPornography, Reason::Pornography, lng_report_reason_pornography);
-	createButton(_reasonOther, Reason::Other, lng_report_reason_other);
-	_reasonGroup->setChangedCallback([=](Reason value) {
-		reasonChanged(value);
-	});
+	_reasonGroup->setChangedCallback([this](Reason value) { reasonChanged(value); });
 
 	updateMaxHeight();
 }
@@ -121,7 +90,7 @@ void ReportBox::onReport() {
 		return;
 	}
 
-	const auto reason = [&] {
+	auto getReason = [this]() {
 		switch (_reasonGroup->value()) {
 		case Reason::Spam: return MTP_inputReportReasonSpam();
 		case Reason::Violence: return MTP_inputReportReasonViolence();
@@ -129,37 +98,17 @@ void ReportBox::onReport() {
 		case Reason::Other: return MTP_inputReportReasonOther(MTP_string(_reasonOtherText->getLastText()));
 		}
 		Unexpected("Bad reason group value.");
-	}();
-	if (_ids) {
-		auto ids = QVector<MTPint>();
-		for (const auto &fullId : *_ids) {
-			ids.push_back(MTP_int(fullId.msg));
-		}
-		_requestId = MTP::send(
-			MTPmessages_Report(
-				_peer->input,
-				MTP_vector<MTPint>(ids),
-				reason),
-			rpcDone(&ReportBox::reportDone),
-			rpcFail(&ReportBox::reportFail));
-	} else {
-		_requestId = MTP::send(
-			MTPaccount_ReportPeer(_peer->input, reason),
-			rpcDone(&ReportBox::reportDone),
-			rpcFail(&ReportBox::reportFail));
-	}
+	};
+	_requestId = MTP::send(MTPaccount_ReportPeer(_peer->input, getReason()), rpcDone(&ReportBox::reportDone), rpcFail(&ReportBox::reportFail));
 }
 
 void ReportBox::reportDone(const MTPBool &result) {
 	_requestId = 0;
-	Ui::Toast::Show(lang(lng_report_thanks));
-	closeBox();
+	Ui::show(Box<InformBox>(lang(lng_report_thanks)));
 }
 
 bool ReportBox::reportFail(const RPCError &error) {
-	if (MTP::isDefaultHandledError(error)) {
-		return false;
-	}
+	if (MTP::isDefaultHandledError(error)) return false;
 
 	_requestId = 0;
 	if (_reasonOtherText) {

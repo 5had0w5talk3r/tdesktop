@@ -58,7 +58,6 @@ int PaddingWrap<RpWidget>::resizeGetHeight(int newWidth) {
 		weak->resizeToWidth(newWidth
 			- _padding.left()
 			- _padding.right());
-		SendPendingMoveResizeEvents(weak);
 	} else {
 		resize(QSize(
 			_padding.left() + newWidth + _padding.right(),

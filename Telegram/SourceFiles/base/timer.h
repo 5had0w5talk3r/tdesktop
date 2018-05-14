@@ -14,10 +14,7 @@ namespace base {
 
 class Timer final : private QObject {
 public:
-	explicit Timer(
-		not_null<QThread*> thread,
-		base::lambda<void()> callback = nullptr);
-	explicit Timer(base::lambda<void()> callback = nullptr);
+	Timer(base::lambda<void()> callback = base::lambda<void()>());
 
 	static Qt::TimerType DefaultType(TimeMs timeout) {
 		constexpr auto kThreshold = TimeMs(1000);
@@ -88,23 +85,17 @@ private:
 class DelayedCallTimer final : private QObject {
 public:
 	int call(TimeMs timeout, lambda_once<void()> callback) {
-		return call(
-			timeout,
-			std::move(callback),
-			Timer::DefaultType(timeout));
+		return call(timeout, std::move(callback), Timer::DefaultType(timeout));
 	}
 
-	int call(
-		TimeMs timeout,
-		lambda_once<void()> callback,
-		Qt::TimerType type);
+	int call(TimeMs timeout, lambda_once<void()> callback, Qt::TimerType type);
 	void cancel(int callId);
 
 protected:
 	void timerEvent(QTimerEvent *e) override;
 
 private:
-	base::flat_map<int, lambda_once<void()>> _callbacks;
+	std::map<int, lambda_once<void()>> _callbacks; // Better to use flatmap.
 
 };
 

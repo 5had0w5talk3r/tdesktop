@@ -7,21 +7,21 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "mtproto/connection_abstract.h"
+#include "mtproto/connection_tcp.h"
 
 namespace MTP {
 namespace internal {
 
-class HTTPConnection : public AbstractConnection {
+class AutoConnection : public AbstractTCPConnection {
 	Q_OBJECT
 
 public:
-	HTTPConnection(QThread *thread);
+
+	AutoConnection(QThread *thread);
 
 	void sendData(mtpBuffer &buffer) override;
 	void disconnectFromServer() override;
-	void connectTcp(const DcOptions::Endpoint &endpoint) override { // not supported
-	}
+	void connectTcp(const DcOptions::Endpoint &endpoint) override;
 	void connectHttp(const DcOptions::Endpoint &endpoint) override;
 	bool isConnected() const override;
 	bool usingHttpWait() override;
@@ -31,27 +31,48 @@ public:
 
 	QString transport() const override;
 
-	static mtpBuffer handleResponse(QNetworkReply *reply);
-	static qint32 handleError(QNetworkReply *reply); // returnes error code
-
 public slots:
+
+	void socketError(QAbstractSocket::SocketError e);
 	void requestFinished(QNetworkReply *reply);
 
+	void onSocketConnected();
+	void onSocketDisconnected();
+	void onHttpStart();
+
+	void onTcpTimeoutTimer();
+
+protected:
+
+	void socketPacket(const char *packet, uint32 length) override;
+
 private:
+
+	void httpSend(mtpBuffer &buffer);
 	enum Status {
-		WaitingHttp = 0,
+		WaitingBoth = 0,
+		WaitingHttp,
+		WaitingTcp,
+		HttpReady,
 		UsingHttp,
+		UsingTcp,
 		FinishedWork
 	};
 	Status status;
-	MTPint128 httpNonce;
-	MTPDdcOption::Flags _flags;
+	MTPint128 tcpNonce, httpNonce;
+	QTimer httpStartTimer;
 
 	QNetworkAccessManager manager;
 	QUrl address;
 
 	typedef QSet<QNetworkReply*> Requests;
 	Requests requests;
+
+	QString _addrTcp, _addrHttp;
+	int32 _portTcp, _portHttp;
+	MTPDdcOption::Flags _flagsTcp, _flagsHttp;
+	int32 _tcpTimeout;
+	QTimer tcpTimeoutTimer;
 
 };
 

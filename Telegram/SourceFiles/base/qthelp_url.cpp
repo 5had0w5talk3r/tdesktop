@@ -38,10 +38,4 @@ QMap<QString, QString> url_parse_params(
 	return result;
 }
 
-bool is_ipv6(const QString &ip) {
-	//static const auto regexp = QRegularExpression("^[a-fA-F0-9:]+$");
-	//return regexp.match(ip).hasMatch();
-	return ip.indexOf(':') >= 0;
-}
-
 } // namespace qthelp

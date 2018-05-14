@@ -69,10 +69,6 @@ public:
 	SuggestionsController(QWidget *parent, not_null<QTextEdit*> field);
 
 	void raise();
-	void setReplaceCallback(base::lambda<void(
-		int from,
-		int till,
-		const QString &replacement)> callback);
 
 protected:
 	bool eventFilter(QObject *object, QEvent *event) override;
@@ -92,10 +88,6 @@ private:
 	bool _ignoreCursorPositionChange = false;
 	bool _textChangeAfterKeyPress = false;
 	QPointer<QTextEdit> _field;
-	base::lambda<void(
-		int from,
-		int till,
-		const QString &replacement)> _replaceCallback;
 	object_ptr<InnerDropdown> _container;
 	QPointer<SuggestionsWidget> _suggestions;
 

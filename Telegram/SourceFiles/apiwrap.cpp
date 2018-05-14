@@ -1623,10 +1623,7 @@ void ApiWrap::requestNotifySetting(PeerData *peer) {
 		notifySettingReceived(notifyPeer, result);
 		_notifySettingRequests.remove(peer);
 	}).fail([this, notifyPeer, peer](const RPCError &error) {
-		notifySettingReceived(notifyPeer, MTP_peerNotifySettings(
-			MTP_flags(MTPDpeerNotifySettings::Flag::f_show_previews),
-			MTP_int(0),
-			MTP_string("default")));
+		notifySettingReceived(notifyPeer, MTP_peerNotifySettingsEmpty());
 		_notifySettingRequests.remove(peer);
 	}).send();
 
@@ -3751,7 +3748,6 @@ void ApiWrap::uploadAlbumMedia(
 		const auto item = App::histItemById(localId);
 		if (!item) {
 			failed();
-			return;
 		}
 		if (const auto media = item->media()) {
 			if (const auto photo = media->photo()) {

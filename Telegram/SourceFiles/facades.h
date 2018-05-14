@@ -345,7 +345,6 @@ DeclareVar(int32, CallRingTimeoutMs);
 DeclareVar(int32, CallConnectTimeoutMs);
 DeclareVar(int32, CallPacketTimeoutMs);
 DeclareVar(bool, PhoneCallsEnabled);
-DeclareVar(bool, BlockedMode);
 DeclareRefVar(base::Observable<void>, PhoneCallsEnabledChanged);
 
 typedef QMap<PeerId, MsgId> HiddenPinnedMessagesMap;
@@ -361,10 +360,7 @@ DeclareVar(QString, DownloadPath);
 DeclareVar(QByteArray, DownloadPathBookmark);
 DeclareRefVar(base::Observable<void>, DownloadPathChanged);
 
-DeclareVar(bool, ReplaceEmoji);
-DeclareVar(bool, SuggestEmoji);
 DeclareVar(bool, SuggestStickersByEmoji);
-DeclareRefVar(base::Observable<void>, ReplaceEmojiChanged);
 DeclareVar(bool, SoundNotify);
 DeclareVar(bool, DesktopNotify);
 DeclareVar(bool, RestoreSoundNotifyFromTray);
@@ -375,11 +371,10 @@ DeclareVar(int, NotificationsCount);
 DeclareVar(Notify::ScreenCorner, NotificationsCorner);
 DeclareVar(bool, NotificationsDemoIsShown);
 
+DeclareVar(DBIConnectionType, ConnectionType);
+DeclareVar(DBIConnectionType, LastProxyType);
 DeclareVar(bool, TryIPv6);
-DeclareVar(std::vector<ProxyData>, ProxiesList);
-DeclareVar(ProxyData, SelectedProxy);
-DeclareVar(bool, UseProxy);
-DeclareVar(bool, UseProxyForCalls);
+DeclareVar(ProxyData, ConnectionProxy);
 DeclareRefVar(base::Observable<void>, ConnectionTypeChanged);
 
 DeclareVar(int, AutoLock);

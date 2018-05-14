@@ -27,11 +27,6 @@ void writeSettings();
 void writeUserSettings();
 void writeMtpData();
 
-void writeAutoupdatePrefix(const QString &prefix);
-#ifndef TDESKTOP_DISABLE_AUTOUPDATE
-QString readAutoupdatePrefix();
-#endif // TDESKTOP_DISABLE_AUTOUPDATE
-
 void reset();
 
 bool checkPasscode(const QByteArray &passcode);

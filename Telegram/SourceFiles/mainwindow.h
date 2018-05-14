@@ -38,6 +38,26 @@ namespace Ui {
 class LinkButton;
 } // namespace Ui
 
+class ConnectingWidget : public TWidget {
+	Q_OBJECT
+
+public:
+	ConnectingWidget(QWidget *parent, const QString &text, const QString &reconnect);
+	void set(const QString &text, const QString &reconnect);
+
+protected:
+	void paintEvent(QPaintEvent *e) override;
+
+public slots:
+	void onReconnect();
+
+private:
+	QString _text;
+	int _textWidth = 0;
+	object_ptr<Ui::LinkButton> _reconnect;
+
+};
+
 class MediaPreviewWidget;
 
 class MainWindow : public Platform::MainWindow {
@@ -56,6 +76,8 @@ public:
 	void serviceNotification(const TextWithEntities &message, const MTPMessageMedia &media = MTP_messageMediaEmpty(), int32 date = 0, bool force = false);
 	void sendServiceHistoryRequest();
 	void showDelayedServiceMsgs();
+
+	void mtpStateChanged(int32 dc, int32 state);
 
 	MainWidget *chatsWidget() {
 		return mainWidget();
@@ -131,6 +153,7 @@ protected:
 public slots:
 	void showSettings();
 	void setInnerFocus();
+	void updateConnectingStatus();
 
 	void quitFromTray();
 	void showFromTray(QSystemTrayIcon::ActivationReason reason = QSystemTrayIcon::Unknown);
@@ -151,6 +174,9 @@ signals:
 	void checkNewAuthorization();
 
 private:
+	void showConnecting(const QString &text, const QString &reconnect = QString());
+	void hideConnecting();
+
 	[[nodiscard]] bool skipTrayClick() const;
 
 	void ensureLayerCreated();
@@ -180,6 +206,7 @@ private:
 	object_ptr<Window::LayerStackWidget> _layerBg = { nullptr };
 	object_ptr<MediaPreviewWidget> _mediaPreview = { nullptr };
 
+	object_ptr<ConnectingWidget> _connecting = { nullptr };
 	object_ptr<Window::Theme::WarningWidget> _testingThemeWarning = { nullptr };
 
 	Local::ClearManager *_clearManager = nullptr;

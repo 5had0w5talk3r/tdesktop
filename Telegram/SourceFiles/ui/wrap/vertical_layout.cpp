@@ -92,17 +92,12 @@ void VerticalLayout::updateChildGeometry(
 		width);
 }
 
-RpWidget *VerticalLayout::insertChild(
-		int atPosition,
+RpWidget *VerticalLayout::addChild(
 		object_ptr<RpWidget> child,
 		const style::margins &margin) {
-	Expects(atPosition >= 0 && atPosition <= _rows.size());
-
-	if (const auto weak = AttachParentChild(this, child)) {
-		_rows.insert(
-			begin(_rows) + atPosition,
-			{ std::move(child), margin });
-		const auto margins = getMargins();
+	if (auto weak = AttachParentChild(this, child)) {
+		_rows.push_back({ std::move(child), margin });
+		auto margins = getMargins();
 		updateChildGeometry(
 			margins,
 			weak,
@@ -110,11 +105,11 @@ RpWidget *VerticalLayout::insertChild(
 			width() - margins.left() - margins.right(),
 			height() - margins.top() - margins.bottom());
 		weak->heightValue(
-		) | rpl::start_with_next_done([=] {
+		) | rpl::start_with_next_done([this, weak] {
 			if (!_inResize) {
 				childHeightUpdated(weak);
 			}
-		}, [=] {
+		}, [this, weak] {
 			removeChild(weak);
 		}, lifetime());
 		return weak;
@@ -164,8 +159,8 @@ void VerticalLayout::removeChild(RpWidget *child) {
 		auto prev = it - 1;
 		return prev->widget->bottomNoMargins() + prev->margin.bottom();
 	}() - margins.top();
-	for (auto next = it + 1; next != end; ++next) {
-		auto &row = *next;
+	for (auto next = it + 1; it != end; ++it) {
+		auto &row = *it;
 		auto margin = row.margin;
 		auto widget = row.widget.data();
 		widget->moveToLeft(
@@ -175,7 +170,6 @@ void VerticalLayout::removeChild(RpWidget *child) {
 			+ widget->heightNoMargins()
 			+ margin.bottom();
 	}
-	it->widget = nullptr;
 	_rows.erase(it);
 
 	resize(width(), margins.top() + top + margins.bottom());

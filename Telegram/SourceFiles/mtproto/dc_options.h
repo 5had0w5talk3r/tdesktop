@@ -8,7 +8,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "base/observer.h"
-#include "base/bytes.h"
 #include "mtproto/rsa_public_key.h"
 #include <string>
 #include <vector>
@@ -24,39 +23,10 @@ enum class DcType {
 };
 class DcOptions {
 public:
-	using Flag = MTPDdcOption::Flag;
-	using Flags = MTPDdcOption::Flags;
-	struct Endpoint {
-		Endpoint(
-			DcId id,
-			Flags flags,
-			const std::string &ip,
-			int port,
-			const bytes::vector &secret)
-			: id(id)
-			, flags(flags)
-			, ip(ip)
-			, port(port)
-			, secret(secret) {
-		}
-
-		DcId id;
-		Flags flags;
-		std::string ip;
-		int port;
-		bytes::vector secret;
-
-	};
-
 	// construct methods don't notify "changed" subscribers.
 	void constructFromSerialized(const QByteArray &serialized);
 	void constructFromBuiltIn();
-	void constructAddOne(
-		int id,
-		Flags flags,
-		const std::string &ip,
-		int port,
-		const bytes::vector &secret);
+	void constructAddOne(int id, MTPDdcOption::Flags flags, const std::string &ip, int port);
 	QByteArray serialize() const;
 
 	using Ids = std::vector<DcId>;
@@ -69,20 +39,25 @@ public:
 
 	Ids configEnumDcIds() const;
 
+	struct Endpoint {
+		std::string ip;
+		int port = 0;
+		MTPDdcOption::Flags flags = 0;
+	};
 	struct Variants {
-		enum Address {
+		enum {
 			IPv4 = 0,
 			IPv6 = 1,
 			AddressTypeCount = 2,
 		};
-		enum Protocol {
+		enum {
 			Tcp = 0,
 			Http = 1,
 			ProtocolCount = 2,
 		};
-		std::vector<Endpoint> data[AddressTypeCount][ProtocolCount];
+		Endpoint data[AddressTypeCount][ProtocolCount];
 	};
-	Variants lookup(DcId dcId, DcType type, bool throughProxy) const;
+	Variants lookup(DcId dcId, DcType type) const;
 	DcType dcType(ShiftedDcId shiftedDcId) const;
 
 	void setCDNConfig(const MTPDcdnConfig &config);
@@ -94,23 +69,16 @@ public:
 	bool writeToFile(const QString &path) const;
 
 private:
-	bool applyOneGuarded(
-		DcId dcId,
-		Flags flags,
-		const std::string &ip,
-		int port,
-		const bytes::vector &secret);
-	static bool ApplyOneOption(
-		std::map<DcId, std::vector<Endpoint>> &data,
-		DcId dcId,
-		Flags flags,
-		const std::string &ip,
-		int port,
-		const bytes::vector &secret);
-	static Ids CountOptionsDifference(
-		const std::map<DcId, std::vector<Endpoint>> &a,
-		const std::map<DcId, std::vector<Endpoint>> &b);
-	static void FilterIfHasWithFlag(Variants &variants, Flag flag);
+	struct Option {
+		Option(DcId id, MTPDdcOption::Flags flags, const std::string &ip, int port) : id(id), flags(flags), ip(ip), port(port) {
+		}
+
+		DcId id;
+		MTPDdcOption::Flags flags;
+		std::string ip;
+		int port;
+	};
+	bool applyOneGuarded(DcId dcId, MTPDdcOption::Flags flags, const std::string &ip, int port);
 
 	void processFromList(const QVector<MTPDcOption> &options, bool overwrite);
 	void computeCdnDcIds();
@@ -123,7 +91,7 @@ private:
 	class ReadLocker;
 	friend class ReadLocker;
 
-	std::map<DcId, std::vector<Endpoint>> _data;
+	std::map<ShiftedDcId, Option> _data;
 	std::set<DcId> _cdnDcIds;
 	std::map<uint64, internal::RSAPublicKey> _publicKeys;
 	std::map<DcId, std::map<uint64, internal::RSAPublicKey>> _cdnPublicKeys;
