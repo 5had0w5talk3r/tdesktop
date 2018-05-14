@@ -1,4 +1,7 @@
-# [Telegram Desktop][telegram_desktop] – Official Messenger
+This is a modified version of the Telegram desktop app that, when compiled will use IBM's Plex font, instead of the default Open Sans font. Bellow is the original description.
+
+
+# [Telegram Desktop][telegram_desktop]
 
 This is the complete source code and the build instructions for the alpha version of the official desktop client for the [Telegram][telegram] messenger, based on the [Telegram API][telegram_api] and the [MTProto][telegram_proto] secure protocol.
 
