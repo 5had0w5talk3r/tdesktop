@@ -11,6 +11,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qthelp_regex.h"
 #include "styles/style_history.h"
 #include "window/window_controller.h"
+#include "emoji_suggestions_data.h"
+#include "chat_helpers/emoji_suggestions_helper.h"
 #include "mainwindow.h"
 #include "auth_session.h"
 
@@ -81,7 +83,8 @@ TextWithTags::Tags ConvertEntitiesToTextTags(const EntitiesInText &entities) {
 	return result;
 }
 
-std::unique_ptr<QMimeData> MimeDataFromTextWithEntities(const TextWithEntities &forClipboard) {
+std::unique_ptr<QMimeData> MimeDataFromTextWithEntities(
+		const TextWithEntities &forClipboard) {
 	if (forClipboard.text.isEmpty()) {
 		return nullptr;
 	}
@@ -93,9 +96,19 @@ std::unique_ptr<QMimeData> MimeDataFromTextWithEntities(const TextWithEntities &
 		for (auto &tag : tags) {
 			tag.id = ConvertTagToMimeTag(tag.id);
 		}
-		result->setData(Ui::FlatTextarea::tagsMimeType(), Ui::FlatTextarea::serializeTagsList(tags));
+		result->setData(
+			Ui::FlatTextarea::tagsMimeType(),
+			Ui::FlatTextarea::serializeTagsList(tags));
 	}
 	return result;
+}
+
+void SetClipboardWithEntities(
+		const TextWithEntities &forClipboard,
+		QClipboard::Mode mode) {
+	if (auto data = MimeDataFromTextWithEntities(forClipboard)) {
+		QApplication::clipboard()->setMimeData(data.release(), mode);
+	}
 }
 
 MessageField::MessageField(QWidget *parent, not_null<Window::Controller*> controller, const style::FlatTextarea &st, base::lambda<QString()> placeholderFactory, const QString &val) : Ui::FlatTextarea(parent, st, std::move(placeholderFactory), val)
@@ -104,6 +117,26 @@ MessageField::MessageField(QWidget *parent, not_null<Window::Controller*> contro
 	setMaxHeight(st::historyComposeFieldMaxHeight);
 
 	setTagMimeProcessor(std::make_unique<FieldTagMimeProcessor>());
+
+	addInstantReplace("--", QString(1, QChar(8212)));
+	addInstantReplace("<<", QString(1, QChar(171)));
+	addInstantReplace(">>", QString(1, QChar(187)));
+	const auto &replacements = Ui::Emoji::internal::GetAllReplacements();
+	for (const auto &one : replacements) {
+		const auto with = Ui::Emoji::QStringFromUTF16(one.emoji);
+		const auto what = Ui::Emoji::QStringFromUTF16(one.replacement);
+		addInstantReplace(what, with);
+	}
+	const auto &pairs = Ui::Emoji::internal::GetReplacementPairs();
+	for (const auto &[what, index] : pairs) {
+		const auto emoji = Ui::Emoji::internal::ByIndex(index);
+		Assert(emoji != nullptr);
+		addInstantReplace(what, emoji->text());
+	}
+	enableInstantReplaces(Global::ReplaceEmoji());
+	subscribe(Global::RefReplaceEmojiChanged(), [=] {
+		enableInstantReplaces(Global::ReplaceEmoji());
+	});
 }
 
 bool MessageField::hasSendText() const {

@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "storage/localstorage.h"
 #include "lang/lang_keys.h"
+#include "data/data_session.h"
 #include "mainwindow.h"
 #include "apiwrap.h"
 
@@ -17,31 +18,6 @@ namespace {
 
 std::map<int, const char*> AlphaLogs() {
 	return {
-	{
-		1001024,
-		"\xE2\x80\x94 Radically improved navigation. "
-		"New side panel on the right with quick access to "
-		"shared media and group members.\n"
-
-		"\xE2\x80\x94 Pinned Messages. If you are a channel admin, "
-		"pin messages to focus your subscribers\xE2\x80\x99 attention "
-		"on important announcements.\n"
-
-		"\xE2\x80\x94 Also supported clearing history in supergroups "
-		"and added a host of minor improvements."
-	},
-	{
-		1001026,
-		"\xE2\x80\x94 Admin badges in supergroup messages.\n"
-		"\xE2\x80\x94 Fix crashing on launch in OS X 10.6.\n"
-		"\xE2\x80\x94 Bug fixes and other minor improvements."
-	},
-	{
-		1001027,
-		"\xE2\x80\x94 Saved Messages. Bookmark messages by forwarding them "
-		"to \xE2\x80\x9C""Saved Messages\xE2\x80\x9D. "
-		"Access them from the Chats list or from the side menu."
-	},
 	{
 		1002002,
 		"\xE2\x80\x94 Grouped photos and videos are displayed as albums."
@@ -71,6 +47,34 @@ std::map<int, const char*> AlphaLogs() {
 		"\xE2\x80\x94 Select a message you want to reply to by "
 		"pressing Ctrl+Up and Ctrl+Down."
 	},
+	{
+		1002009,
+		"\xE2\x80\x94 Quick Reply. "
+		"Double click next to any message for a quick reply.\n"
+
+		"\xE2\x80\x94 Search for Stickers. "
+		"Click on the new search icon to access "
+		"your sticker sets or find new ones."
+	},
+	{
+		1002019,
+		"\xE2\x80\x94 Enable proxy for calls in Settings.\n"
+
+		"\xE2\x80\x94 Bug fixes and other minor improvements."
+	},
+	{
+		1002020,
+		"\xE2\x80\x94 Emoji and text replacements are done "
+		"while you type the message.\n"
+
+		"\xE2\x80\x94 Revert emoji and text replacements "
+		"by pressing backspace.\n"
+
+		"\xE2\x80\x94 Disable emoji replacements or suggestions "
+		"in Settings.\n"
+
+		"\xE2\x80\x94 Some critical bug fixes."
+	}
 	};
 }
 
